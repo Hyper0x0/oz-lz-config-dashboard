@@ -1,0 +1,15 @@
+[
+  {"type":"function","name":"owner","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"token","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"peers","inputs":[{"name":"eid","type":"uint32"}],"outputs":[{"name":"peer","type":"bytes32"}],"stateMutability":"view"},
+  {"type":"function","name":"enforcedOptions","inputs":[{"name":"eid","type":"uint32"},{"name":"msgType","type":"uint16"}],"outputs":[{"name":"enforcedOption","type":"bytes"}],"stateMutability":"view"},
+  {"type":"function","name":"rateLimits","inputs":[{"name":"dstEid","type":"uint32"}],"outputs":[{"name":"amountInFlight","type":"uint192"},{"name":"lastUpdated","type":"uint64"},{"name":"limit","type":"uint192"},{"name":"window","type":"uint64"}],"stateMutability":"view"},
+  {"type":"function","name":"getAmountCanBeSent","inputs":[{"name":"_dstEid","type":"uint32"}],"outputs":[{"name":"currentAmountInFlight","type":"uint256"},{"name":"amountCanBeSent","type":"uint256"}],"stateMutability":"view"},
+  {"type":"function","name":"setPeer","inputs":[{"name":"_eid","type":"uint32"},{"name":"_peer","type":"bytes32"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setEnforcedOptions","inputs":[{"name":"_enforcedOptions","type":"tuple[]","components":[{"name":"eid","type":"uint32"},{"name":"msgType","type":"uint16"},{"name":"options","type":"bytes"}]}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setRateLimits","inputs":[{"name":"_rateLimitConfigs","type":"tuple[]","components":[{"name":"dstEid","type":"uint32"},{"name":"limit","type":"uint192"},{"name":"window","type":"uint64"}]}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"resetRateLimits","inputs":[{"name":"_eids","type":"uint32[]"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setDelegate","inputs":[{"name":"_delegate","type":"address"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"event","name":"PeerSet","inputs":[{"name":"eid","type":"uint32","indexed":false},{"name":"peer","type":"bytes32","indexed":false}],"anonymous":false},
+  {"type":"event","name":"RateLimitsChanged","inputs":[{"name":"rateLimitConfigs","type":"tuple[]","indexed":false,"components":[{"name":"dstEid","type":"uint32"},{"name":"limit","type":"uint192"},{"name":"window","type":"uint64"}]}],"anonymous":false}
+]

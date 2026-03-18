@@ -1,0 +1,10 @@
+[
+  {"type":"function","name":"owner","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"token","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"peers","inputs":[{"name":"eid","type":"uint32"}],"outputs":[{"name":"peer","type":"bytes32"}],"stateMutability":"view"},
+  {"type":"function","name":"enforcedOptions","inputs":[{"name":"eid","type":"uint32"},{"name":"msgType","type":"uint16"}],"outputs":[{"name":"enforcedOption","type":"bytes"}],"stateMutability":"view"},
+  {"type":"function","name":"setPeer","inputs":[{"name":"_eid","type":"uint32"},{"name":"_peer","type":"bytes32"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setEnforcedOptions","inputs":[{"name":"_enforcedOptions","type":"tuple[]","components":[{"name":"eid","type":"uint32"},{"name":"msgType","type":"uint16"},{"name":"options","type":"bytes"}]}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setDelegate","inputs":[{"name":"_delegate","type":"address"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"event","name":"PeerSet","inputs":[{"name":"eid","type":"uint32","indexed":false},{"name":"peer","type":"bytes32","indexed":false}],"anonymous":false}
+]
