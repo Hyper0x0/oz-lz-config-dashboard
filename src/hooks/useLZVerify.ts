@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress } from 'ethers';
 import EndpointV2ABI from '@/abis/EndpointV2.json';
-import SyOFTAdapterABI from '@/abis/SyOFTAdapter.json';
-import SySharePeerABI from '@/abis/SySharePeer.json';
+import OFTAdapterABI from '@/abis/OFTAdapter.json';
+import OFTABI from '@/abis/OFT.json';
 import type {
   PathwayVerifyResult,
   VerifyCheck,
@@ -229,8 +229,8 @@ export function useLZVerify() {
     const remoteProvider = new JsonRpcProvider(p.remoteChain.rpc);
     const homeEp = endpointContract(p.homeChain.endpoint, homeProvider);
     const remoteEp = endpointContract(p.remoteChain.endpoint, remoteProvider);
-    const adapter = new Contract(p.adapterAddr, SyOFTAdapterABI, homeProvider) as unknown as IOFTAdapter;
-    const peer = new Contract(p.peerAddr, SySharePeerABI, remoteProvider) as unknown as IOFTPeer;
+    const adapter = new Contract(p.adapterAddr, OFTAdapterABI, homeProvider) as unknown as IOFTAdapter;
+    const peer = new Contract(p.peerAddr, OFTABI, remoteProvider) as unknown as IOFTPeer;
 
     let error: string | null = null;
     const partial: Partial<Omit<PathwayVerifyResult, 'checks' | 'error'>> = {};

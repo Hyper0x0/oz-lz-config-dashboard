@@ -6,13 +6,13 @@ export function App(): JSX.Element {
   return (
     <BrowserRouter>
       <nav className="nav">
-        <span className="nav-brand">OFT Config Dashboard</span>
+        <span className="nav-brand">OZLZ - Config Dashboard</span>
         <div className="nav-links">
           <NavLink to="/" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
-            Timelock
+            OZ - Timelock
           </NavLink>
           <NavLink to="/wiring" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
-            OFT Wiring
+            LZ - OFT
           </NavLink>
         </div>
       </nav>

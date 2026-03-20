@@ -97,7 +97,7 @@ export interface TokenInfo {
   peerSymbol: string;
 }
 
-export interface IAdminGateway {
+export interface ITimelockController {
   getMinDelay(): Promise<bigint>;
   getTimestamp(id: string): Promise<bigint>;
   getOperationState(id: string): Promise<number>;

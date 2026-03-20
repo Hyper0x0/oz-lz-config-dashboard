@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { Contract, JsonRpcSigner, JsonRpcProvider, ZeroHash } from 'ethers';
-import AdminGatewayABI from '@/abis/AdminGateway.json';
-import type { TxState, OperationState, IAdminGateway } from '@/types';
+import { Contract, JsonRpcSigner, JsonRpcProvider, BrowserProvider, ContractRunner, ZeroHash } from 'ethers';
+import TimelockControllerABI from '@/abis/TimelockController.json';
+import type { TxState, OperationState, ITimelockController } from '@/types';
 import { operationStateLabel } from '@/utils/timelock';
 import { ARB_SEPOLIA } from '@/config/chains';
 
@@ -23,14 +23,14 @@ interface TimelockOps {
     predecessor: string,
     salt: string,
   ) => Promise<TxState>;
-  cancel: (adminGatewayAddr: string, id: string) => Promise<TxState>;
-  getMinDelay: (adminGatewayAddr: string) => Promise<bigint>;
-  getOperationState: (adminGatewayAddr: string, id: string) => Promise<OperationState>;
-  getTimestamp: (adminGatewayAddr: string, id: string) => Promise<bigint>;
+  cancel: (timelockAddr: string, id: string) => Promise<TxState>;
+  getMinDelay: (timelockAddr: string, walletProvider?: BrowserProvider) => Promise<bigint>;
+  getOperationState: (timelockAddr: string, id: string, walletProvider?: BrowserProvider) => Promise<OperationState>;
+  getTimestamp: (timelockAddr: string, id: string, walletProvider?: BrowserProvider) => Promise<bigint>;
 }
 
-function gatewayContract(addr: string, signerOrProvider: JsonRpcSigner | JsonRpcProvider): IAdminGateway {
-  return new Contract(addr, AdminGatewayABI, signerOrProvider) as unknown as IAdminGateway;
+function timelockContract(addr: string, runner: ContractRunner): ITimelockController {
+  return new Contract(addr, TimelockControllerABI, runner) as unknown as ITimelockController;
 }
 
 export function useTimelockOps(signer: JsonRpcSigner | null): TimelockOps {
@@ -44,7 +44,7 @@ export function useTimelockOps(signer: JsonRpcSigner | null): TimelockOps {
       delay: bigint,
     ): Promise<TxState> => {
       if (!signer) return { status: 'error', message: 'Wallet not connected' };
-      const contract = gatewayContract(target, signer);
+      const contract = timelockContract(target, signer);
       try {
         const tx = await contract.schedule(target, value, data, predecessor || ZERO_BYTES32, salt, delay);
         await tx.wait();
@@ -65,7 +65,7 @@ export function useTimelockOps(signer: JsonRpcSigner | null): TimelockOps {
       salt: string,
     ): Promise<TxState> => {
       if (!signer) return { status: 'error', message: 'Wallet not connected' };
-      const contract = gatewayContract(target, signer);
+      const contract = timelockContract(target, signer);
       try {
         const tx = await contract.execute(target, value, data, predecessor || ZERO_BYTES32, salt);
         await tx.wait();
@@ -80,7 +80,7 @@ export function useTimelockOps(signer: JsonRpcSigner | null): TimelockOps {
   const cancel = useCallback(
     async (adminGatewayAddr: string, id: string): Promise<TxState> => {
       if (!signer) return { status: 'error', message: 'Wallet not connected' };
-      const contract = gatewayContract(adminGatewayAddr, signer);
+      const contract = timelockContract(adminGatewayAddr, signer);
       try {
         const tx = await contract.cancel(id);
         await tx.wait();
@@ -92,27 +92,28 @@ export function useTimelockOps(signer: JsonRpcSigner | null): TimelockOps {
     [signer],
   );
 
+  function readProvider(walletProvider?: BrowserProvider): ContractRunner {
+    return walletProvider ?? new JsonRpcProvider(ARB_SEPOLIA.rpc);
+  }
+
   const getMinDelay = useCallback(
-    async (adminGatewayAddr: string): Promise<bigint> => {
-      const provider = new JsonRpcProvider(ARB_SEPOLIA.rpc);
-      return gatewayContract(adminGatewayAddr, provider).getMinDelay();
+    async (timelockAddr: string, walletProvider?: BrowserProvider): Promise<bigint> => {
+      return timelockContract(timelockAddr, readProvider(walletProvider)).getMinDelay();
     },
     [],
   );
 
   const getOperationState = useCallback(
-    async (adminGatewayAddr: string, id: string): Promise<OperationState> => {
-      const provider = new JsonRpcProvider(ARB_SEPOLIA.rpc);
-      const state = await gatewayContract(adminGatewayAddr, provider).getOperationState(id);
+    async (timelockAddr: string, id: string, walletProvider?: BrowserProvider): Promise<OperationState> => {
+      const state = await timelockContract(timelockAddr, readProvider(walletProvider)).getOperationState(id);
       return operationStateLabel(state);
     },
     [],
   );
 
   const getTimestamp = useCallback(
-    async (adminGatewayAddr: string, id: string): Promise<bigint> => {
-      const provider = new JsonRpcProvider(ARB_SEPOLIA.rpc);
-      return gatewayContract(adminGatewayAddr, provider).getTimestamp(id);
+    async (timelockAddr: string, id: string, walletProvider?: BrowserProvider): Promise<bigint> => {
+      return timelockContract(timelockAddr, readProvider(walletProvider)).getTimestamp(id);
     },
     [],
   );

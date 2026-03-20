@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner } from 'ethers';
-import SyOFTAdapterABI from '@/abis/SyOFTAdapter.json';
-import SySharePeerABI from '@/abis/SySharePeer.json';
+import OFTAdapterABI from '@/abis/OFTAdapter.json';
+import OFTABI from '@/abis/OFT.json';
 import ERC20ABI from '@/abis/ERC20.json';
 import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
@@ -23,11 +23,11 @@ interface OFTWiring {
 }
 
 function adapterContract(addr: string, signerOrProvider: ContractRunner): IOFTAdapter {
-  return new Contract(addr, SyOFTAdapterABI, signerOrProvider) as unknown as IOFTAdapter;
+  return new Contract(addr, OFTAdapterABI, signerOrProvider) as unknown as IOFTAdapter;
 }
 
 function peerContract(addr: string, signerOrProvider: ContractRunner): IOFTPeer {
-  return new Contract(addr, SySharePeerABI, signerOrProvider) as unknown as IOFTPeer;
+  return new Contract(addr, OFTABI, signerOrProvider) as unknown as IOFTPeer;
 }
 
 export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
