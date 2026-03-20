@@ -71,6 +71,55 @@ select.input { cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
+/* Token banner */
+.token-banner { display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 12px; padding: 12px; background: #111; border: 1px solid var(--border); border-radius: 6px; }
+
+/* Guided step cards */
+.step-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.step-card-open { border-color: #3a3a5a; }
+.step-header { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: none; color: var(--text); padding: 14px 16px; cursor: pointer; font-family: var(--font-mono); font-size: 13px; }
+.step-header:hover { background: #1a1a1a; }
+.step-num { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: #2a2a3a; border: 1px solid #3a3a5a; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.step-body { padding: 16px; border-top: 1px solid var(--border); }
+.step-hint { color: #666; font-size: 12px; margin: 8px 0; line-height: 1.6; }
+.step-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.step-info { background: #111; border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; font-size: 13px; }
+.step-info-warn { border-color: #3a2e00; background: #1a1600; color: #ffd93d; }
+.step-warn-banner { background: #1f0d0d; border: 1px solid #5a2020; border-radius: 5px; padding: 10px 12px; font-size: 13px; color: #ff9999; }
+.mono-block { display: block; background: #0e0e0e; border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 12px; font-family: var(--font-mono); word-break: break-all; margin-top: 4px; }
+
+/* Chain searchable dropdown */
+.chain-dropdown { position: absolute; z-index: 100; top: calc(100% + 4px); left: 0; right: 0; background: #161616; border: 1px solid #3a3a5a; border-radius: 6px; box-shadow: 0 4px 24px rgba(0,0,0,0.6); }
+.chain-option { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--text); }
+.chain-option:hover { background: #1e1e2e; }
+.chain-option-active { background: #1a1a2e; color: var(--accent); }
+
+/* DVN dropdown */
+.dvn-trigger { text-align: left; min-height: 36px; }
+.dvn-dropdown-list { position: absolute; z-index: 100; top: calc(100% + 4px); left: 0; right: 0; background: #161616; border: 1px solid #3a3a5a; border-radius: 6px; max-height: 280px; overflow-y: auto; box-shadow: 0 4px 24px rgba(0,0,0,0.6); }
+.dvn-option { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; font-family: var(--font-mono); font-size: 13px; color: var(--text); }
+.dvn-option:hover { background: #1e1e2e; }
+.dvn-option input[type=checkbox] { accent-color: var(--accent); flex-shrink: 0; }
+
+/* Verify summary grid */
+.verify-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; background: #111; border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 4px; }
+
+/* Ghost button (unselected tab) */
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.btn-ghost:hover:not(:disabled) { background: #1e1e1e; color: var(--text); }
+
+/* Verify check rows */
+.check-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 5px; margin-bottom: 6px; font-size: 13px; }
+.check-pass { background: #0d1f0f; border: 1px solid #1e4023; }
+.check-critical { background: #1f0d0d; border: 1px solid #4a1a1a; }
+.check-warn { background: #1f1800; border: 1px solid #3a2e00; }
+.check-info { background: #0e0e18; border: 1px solid #2a2a3a; }
+.check-icon { font-size: 14px; line-height: 1.4; min-width: 16px; }
+.check-pass .check-icon { color: #6bcb77; }
+.check-critical .check-icon { color: #ff6b6b; }
+.check-warn .check-icon { color: #ffd93d; }
+.check-info .check-icon { color: #888; }
+
 @media (max-width: 640px) {
   .state-grid, .form-grid, .action-row { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: flex-start; gap: 12px; }

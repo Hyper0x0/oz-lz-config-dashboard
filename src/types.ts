@@ -65,11 +65,36 @@ export interface IOFTAdapter {
 
 export interface IOFTPeer {
   owner(): Promise<string>;
+  name(): Promise<string>;
+  symbol(): Promise<string>;
   peers(eid: number): Promise<string>;
   enforcedOptions(eid: number, msgType: number): Promise<string>;
   setPeer(eid: number, peer: string): Promise<ContractTransactionResponse>;
   setEnforcedOptions(params: EnforcedOptionParam[]): Promise<ContractTransactionResponse>;
   setDelegate(delegate: string): Promise<ContractTransactionResponse>;
+}
+
+export interface IERC20Read {
+  name(): Promise<string>;
+  symbol(): Promise<string>;
+}
+
+export interface DVNProvider {
+  /** Canonical display name, e.g. "LayerZero Labs" */
+  name: string;
+  /** Contract address on this specific chain */
+  address: string;
+  /** Short colour key for the avatar (derived from name) */
+  color: string;
+}
+
+export interface TokenInfo {
+  /** Name of the underlying ERC-20 locked by the adapter (e.g. "Shift Yield Share USDC") */
+  tokenName: string;
+  tokenSymbol: string;
+  /** Name / symbol of the peer OFT on the remote chain */
+  peerName: string;
+  peerSymbol: string;
 }
 
 export interface IAdminGateway {
@@ -80,6 +105,56 @@ export interface IAdminGateway {
   schedule(target: string, value: bigint, data: string, predecessor: string, salt: string, delay: bigint): Promise<ContractTransactionResponse>;
   execute(target: string, value: bigint, payload: string, predecessor: string, salt: string): Promise<ContractTransactionResponse>;
   cancel(id: string): Promise<ContractTransactionResponse>;
+}
+
+// ── LZ Verification ───────────────────────────────────────────────────────────
+
+export interface UlnConfig {
+  confirmations: bigint;
+  requiredDVNCount: number;
+  optionalDVNCount: number;
+  optionalDVNThreshold: number;
+  requiredDVNs: string[];
+  optionalDVNs: string[];
+}
+
+export interface ExecutorConfig {
+  maxMessageSize: number;
+  executor: string;
+}
+
+export interface VerifyCheck {
+  label: string;
+  passed: boolean;
+  detail: string;
+  /** critical = blocks sends, warning = risky, info = informational */
+  severity: 'critical' | 'warning' | 'info';
+}
+
+export interface PathwayVerifyResult {
+  /** Chain A → Chain B */
+  homeSendLib: string | null;
+  homeExecutor: ExecutorConfig | null;
+  homeDVN: UlnConfig | null;
+  homeDelegate: string | null;
+  homePeer: string | null;
+  homeEnforcedOptions: string | null;
+  homeRateLimit?: { limit: bigint; window: number } | null;
+
+  /** Whether the home endpoint recognises the remote EID */
+  remoteEidSupported: boolean;
+  /** Whether the remote endpoint recognises the home EID */
+  homeEidSupported: boolean;
+
+  /** Chain B receive config */
+  remoteReceiveLib: string | null;
+  remoteReceiveLibIsDefault: boolean;
+  remoteDVN: UlnConfig | null;
+  remotePeer: string | null;
+  remoteEnforcedOptions: string | null;
+
+  checks: VerifyCheck[];
+  error: string | null;
 }
 
 /** VaultState mirrors the Solidity enum VaultState */

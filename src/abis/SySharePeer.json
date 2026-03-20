@@ -1,5 +1,7 @@
 [
   {"type":"function","name":"owner","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"name","inputs":[],"outputs":[{"name":"","type":"string"}],"stateMutability":"view"},
+  {"type":"function","name":"symbol","inputs":[],"outputs":[{"name":"","type":"string"}],"stateMutability":"view"},
   {"type":"function","name":"token","inputs":[],"outputs":[{"name":"","type":"address"}],"stateMutability":"view"},
   {"type":"function","name":"peers","inputs":[{"name":"eid","type":"uint32"}],"outputs":[{"name":"peer","type":"bytes32"}],"stateMutability":"view"},
   {"type":"function","name":"enforcedOptions","inputs":[{"name":"eid","type":"uint32"},{"name":"msgType","type":"uint16"}],"outputs":[{"name":"enforcedOption","type":"bytes"}],"stateMutability":"view"},

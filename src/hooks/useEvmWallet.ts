@@ -3,6 +3,7 @@ import { BrowserProvider, JsonRpcSigner } from 'ethers';
 
 interface EvmWallet {
   signer: JsonRpcSigner | null;
+  provider: BrowserProvider | null;
   address: string | null;
   chainId: number | null;
   isConnected: boolean;
@@ -12,6 +13,7 @@ interface EvmWallet {
 
 export function useEvmWallet(): EvmWallet {
   const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
+  const [browserProvider, setBrowserProvider] = useState<BrowserProvider | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
 
@@ -23,6 +25,7 @@ export function useEvmWallet(): EvmWallet {
     const s = await provider.getSigner();
     const network = await provider.getNetwork();
     setSigner(s);
+    setBrowserProvider(provider);
     setAddress(await s.getAddress());
     setChainId(Number(network.chainId));
   }, []);
@@ -40,9 +43,10 @@ export function useEvmWallet(): EvmWallet {
     const s = await provider.getSigner();
     const network = await provider.getNetwork();
     setSigner(s);
+    setBrowserProvider(provider);
     setAddress(await s.getAddress());
     setChainId(Number(network.chainId));
   }, []);
 
-  return { signer, address, chainId, isConnected: signer !== null, connect, switchNetwork };
+  return { signer, provider: browserProvider, address, chainId, isConnected: signer !== null, connect, switchNetwork };
 }

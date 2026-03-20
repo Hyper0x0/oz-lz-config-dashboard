@@ -1,14 +1,16 @@
 import { useCallback } from 'react';
-import { Contract, JsonRpcProvider, JsonRpcSigner } from 'ethers';
+import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner } from 'ethers';
 import SyOFTAdapterABI from '@/abis/SyOFTAdapter.json';
 import SySharePeerABI from '@/abis/SySharePeer.json';
-import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer } from '@/types';
+import ERC20ABI from '@/abis/ERC20.json';
+import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import { feltToBytes32, evmToFelt } from '@/utils/cairoAddress';
 
 const SEND_MSG_TYPE = 1;
 
 interface OFTWiring {
+  readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider) => Promise<TokenInfo>;
   readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string) => Promise<AdapterState>;
   readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string) => Promise<PeerState>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
@@ -20,16 +22,37 @@ interface OFTWiring {
   setCairoPeer: (cairoOftAddr: string, adapterEid: number, adapterEvmAddr: string) => Promise<TxState>;
 }
 
-function adapterContract(addr: string, signerOrProvider: JsonRpcProvider | JsonRpcSigner): IOFTAdapter {
+function adapterContract(addr: string, signerOrProvider: ContractRunner): IOFTAdapter {
   return new Contract(addr, SyOFTAdapterABI, signerOrProvider) as unknown as IOFTAdapter;
 }
 
-function peerContract(addr: string, signerOrProvider: JsonRpcProvider | JsonRpcSigner): IOFTPeer {
+function peerContract(addr: string, signerOrProvider: ContractRunner): IOFTPeer {
   return new Contract(addr, SySharePeerABI, signerOrProvider) as unknown as IOFTPeer;
 }
 
 export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   // ── Read ──────────────────────────────────────────────────────────────────
+
+  const readTokenInfo = useCallback(
+    async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider): Promise<TokenInfo> => {
+      const homeProvider = walletProvider ?? new JsonRpcProvider(homeRpc);
+      const remoteProvider = new JsonRpcProvider(remoteRpc);
+      const adapter = adapterContract(adapterAddr, homeProvider);
+      const peer = peerContract(peerAddr, remoteProvider);
+
+      const tokenAddr = await adapter.token();
+      const erc20 = new Contract(tokenAddr, ERC20ABI, homeProvider) as unknown as IERC20Read;
+
+      const [tokenName, tokenSymbol, peerName, peerSymbol] = await Promise.all([
+        erc20.name(),
+        erc20.symbol(),
+        peer.name(),
+        peer.symbol(),
+      ]);
+      return { tokenName, tokenSymbol, peerName, peerSymbol };
+    },
+    [],
+  );
 
   const readAdapterState = useCallback(
     async (adapterAddr: string, peerEid: number, homeRpc: string): Promise<AdapterState> => {
@@ -171,6 +194,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   return {
+    readTokenInfo,
     readAdapterState,
     readPeerState,
     setEvmPeer,

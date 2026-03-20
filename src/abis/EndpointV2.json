@@ -1,0 +1,10 @@
+[
+  {"type":"function","name":"getSendLibrary","inputs":[{"name":"sender","type":"address"},{"name":"eid","type":"uint32"}],"outputs":[{"name":"lib","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"getReceiveLibrary","inputs":[{"name":"receiver","type":"address"},{"name":"srcEid","type":"uint32"}],"outputs":[{"name":"lib","type":"address"},{"name":"isDefault","type":"bool"}],"stateMutability":"view"},
+  {"type":"function","name":"getConfig","inputs":[{"name":"oapp","type":"address"},{"name":"lib","type":"address"},{"name":"eid","type":"uint32"},{"name":"configType","type":"uint32"}],"outputs":[{"name":"config","type":"bytes"}],"stateMutability":"view"},
+  {"type":"function","name":"delegates","inputs":[{"name":"oapp","type":"address"}],"outputs":[{"name":"delegate","type":"address"}],"stateMutability":"view"},
+  {"type":"function","name":"isSupportedEid","inputs":[{"name":"eid","type":"uint32"}],"outputs":[{"name":"supported","type":"bool"}],"stateMutability":"view"},
+  {"type":"function","name":"setSendLibrary","inputs":[{"name":"oapp","type":"address"},{"name":"eid","type":"uint32"},{"name":"newLib","type":"address"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setReceiveLibrary","inputs":[{"name":"oapp","type":"address"},{"name":"eid","type":"uint32"},{"name":"newLib","type":"address"},{"name":"gracePeriod","type":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
+  {"type":"function","name":"setConfig","inputs":[{"name":"oapp","type":"address"},{"name":"lib","type":"address"},{"name":"params","type":"tuple[]","components":[{"name":"eid","type":"uint32"},{"name":"configType","type":"uint32"},{"name":"config","type":"bytes"}]}],"outputs":[],"stateMutability":"nonpayable"}
+]
