@@ -20,11 +20,17 @@ interface Props {
   onSwitchNetwork: (chainId: number) => void;
   wiring: Wiring;
   verifyResult: PathwayVerifyResult | null;
+  isAdapter?: boolean;
+  /** False when remote is Starknet — hides all EVM-only remote-side actions */
+  isRemoteEvm?: boolean;
+  /** Hide Step 5 (peers) — used when peer setup is handled by a shared section outside */
+  hidePeerStep?: boolean;
 }
 
 export function GuidedConfigure({
   homeChain, remoteChain, adapterAddr, peerAddr,
   connectedChainId, isConnected, signer, onSwitchNetwork, wiring, verifyResult,
+  isAdapter = true, isRemoteEvm = true, hidePeerStep = false,
 }: Props): JSX.Element {
   const [openStep, setOpenStep] = useState<number | null>(1);
   const toggle = (n: number) => setOpenStep((p) => (p === n ? null : n));
@@ -35,30 +41,38 @@ export function GuidedConfigure({
         homeChain={homeChain} remoteChain={remoteChain}
         adapterAddr={adapterAddr} peerAddr={peerAddr}
         connectedChainId={connectedChainId} isConnected={isConnected}
-        onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult} />
+        onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult}
+        isRemoteEvm={isRemoteEvm} />
 
-      <Step2RateLimit open={openStep === 2} onToggle={() => toggle(2)}
-        remoteChain={remoteChain} adapterAddr={adapterAddr}
-        connectedChainId={connectedChainId} isConnected={isConnected}
-        onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult} />
+      {isAdapter && (
+        <Step2RateLimit open={openStep === 2} onToggle={() => toggle(2)}
+          remoteChain={remoteChain} adapterAddr={adapterAddr}
+          connectedChainId={connectedChainId} isConnected={isConnected}
+          onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult} />
+      )}
 
       <Step3Libraries open={openStep === 3} onToggle={() => toggle(3)}
         homeChain={homeChain} remoteChain={remoteChain}
         adapterAddr={adapterAddr} peerAddr={peerAddr}
         connectedChainId={connectedChainId} isConnected={isConnected}
-        signer={signer} onSwitchNetwork={onSwitchNetwork} verifyResult={verifyResult} />
+        signer={signer} onSwitchNetwork={onSwitchNetwork} verifyResult={verifyResult}
+        isRemoteEvm={isRemoteEvm} />
 
       <Step4DVN open={openStep === 4} onToggle={() => toggle(4)}
         homeChain={homeChain} remoteChain={remoteChain}
         adapterAddr={adapterAddr} peerAddr={peerAddr}
         connectedChainId={connectedChainId} isConnected={isConnected}
-        signer={signer} onSwitchNetwork={onSwitchNetwork} verifyResult={verifyResult} />
+        signer={signer} onSwitchNetwork={onSwitchNetwork} verifyResult={verifyResult}
+        isRemoteEvm={isRemoteEvm} />
 
-      <Step5Peers open={openStep === 5} onToggle={() => toggle(5)}
-        homeChain={homeChain} remoteChain={remoteChain}
-        adapterAddr={adapterAddr} peerAddr={peerAddr}
-        connectedChainId={connectedChainId} isConnected={isConnected}
-        onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult} />
+      {!hidePeerStep && (
+        <Step5Peers open={openStep === 5} onToggle={() => toggle(5)}
+          homeChain={homeChain} remoteChain={remoteChain}
+          adapterAddr={adapterAddr} peerAddr={peerAddr}
+          connectedChainId={connectedChainId} isConnected={isConnected}
+          onSwitchNetwork={onSwitchNetwork} wiring={wiring} verifyResult={verifyResult}
+          isRemoteEvm={isRemoteEvm} />
+      )}
     </div>
   );
 }
@@ -235,13 +249,14 @@ function DVNDropdown({ chainKey, selected, onToggle }: {
 // ── Step 1 — Enforced Options ─────────────────────────────────────────────────
 
 function Step1Options({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAddr,
-  connectedChainId, isConnected, onSwitchNetwork, wiring, verifyResult }: {
+  connectedChainId, isConnected, onSwitchNetwork, wiring, verifyResult, isRemoteEvm = true }: {
   open: boolean; onToggle: () => void;
   homeChain: LZChain; remoteChain: LZChain;
   adapterAddr: string; peerAddr: string;
   connectedChainId: number | null; isConnected: boolean;
   onSwitchNetwork: (id: number) => void;
   wiring: Wiring; verifyResult: PathwayVerifyResult | null;
+  isRemoteEvm?: boolean;
 }): JSX.Element {
   const [gas, setGas] = useState('80000');
   const [adapterTx, setAdapterTx] = useState<TxState>({ status: 'idle' });
@@ -267,16 +282,18 @@ function Step1Options({ open, onToggle, homeChain, remoteChain, adapterAddr, pee
           </button>
           <div style={{ marginTop: 6 }}><TxStatus state={adapterTx} /></div>
         </div>
-        <div>
-          <ChainSwitch label="Peer (remote):" requiredChainId={remoteChain.chainId}
-            requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
-            isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
-          <button className="btn btn-primary" disabled={!isConnected || connectedChainId !== remoteChain.chainId}
-            onClick={async () => { setPeerTx({ status: 'pending' }); setPeerTx(await wiring.setEvmEnforcedOptions(peerAddr, homeChain.eid, BigInt(gas))); }}>
-            Set on Peer
-          </button>
-          <div style={{ marginTop: 6 }}><TxStatus state={peerTx} /></div>
-        </div>
+        {isRemoteEvm && (
+          <div>
+            <ChainSwitch label="Peer (remote):" requiredChainId={remoteChain.chainId}
+              requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
+              isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
+            <button className="btn btn-primary" disabled={!isConnected || connectedChainId !== remoteChain.chainId}
+              onClick={async () => { setPeerTx({ status: 'pending' }); setPeerTx(await wiring.setEvmEnforcedOptions(peerAddr, homeChain.eid, BigInt(gas))); }}>
+              Set on Peer
+            </button>
+            <div style={{ marginTop: 6 }}><TxStatus state={peerTx} /></div>
+          </div>
+        )}
       </div>
     </StepCard>
   );
@@ -323,7 +340,7 @@ function Step2RateLimit({ open, onToggle, remoteChain, adapterAddr,
 // ── Step 3 — Libraries ────────────────────────────────────────────────────────
 
 function Step3Libraries({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAddr,
-  connectedChainId, isConnected, signer, onSwitchNetwork, verifyResult }: {
+  connectedChainId, isConnected, signer, onSwitchNetwork, verifyResult, isRemoteEvm = true }: {
   open: boolean; onToggle: () => void;
   homeChain: LZChain; remoteChain: LZChain;
   adapterAddr: string; peerAddr: string;
@@ -331,16 +348,20 @@ function Step3Libraries({ open, onToggle, homeChain, remoteChain, adapterAddr, p
   signer: JsonRpcSigner | null;
   onSwitchNetwork: (id: number) => void;
   verifyResult: PathwayVerifyResult | null;
+  isRemoteEvm?: boolean;
 }): JSX.Element {
   const epConfig = useEndpointConfig(signer);
-  const [sendLib, setSendLib] = useState('');
-  const [recvLib, setRecvLib] = useState('');
+  // Pre-fill: verify result takes priority, then chain catalog defaults
+  const currentSendLib = verifyResult?.homeSendLib ?? homeChain.sendLib ?? '';
+  const currentRecvLib = verifyResult?.remoteReceiveLib ?? (isRemoteEvm ? remoteChain.receiveLib : undefined) ?? '';
+  const [sendLib, setSendLib] = useState(currentSendLib);
+  const [recvLib, setRecvLib] = useState(currentRecvLib);
   const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
   const [recvTx, setRecvTx] = useState<TxState>({ status: 'idle' });
 
-  // Pre-fill from verify result if available
-  const currentSendLib = verifyResult?.homeSendLib;
-  const currentRecvLib = verifyResult?.remoteReceiveLib;
+  // Keep fields in sync if chain changes
+  useEffect(() => { if (!sendLib) setSendLib(currentSendLib); }, [currentSendLib]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!recvLib) setRecvLib(currentRecvLib); }, [currentRecvLib]); // eslint-disable-line react-hooks/exhaustive-deps
   const badge = verifyResult ? checkBadge(verifyResult.checks, 'Receive library set') : null;
 
   return (
@@ -382,23 +403,25 @@ function Step3Libraries({ open, onToggle, homeChain, remoteChain, adapterAddr, p
           </button>
           <div style={{ marginTop: 6 }}><TxStatus state={sendTx} /></div>
         </div>
-        <div>
-          <div className="label" style={{ marginBottom: 8 }}>Receive library (remote chain — {remoteChain.name})</div>
-          <Field label="Receive lib address (ULN302)" value={recvLib} onChange={setRecvLib}
-            placeholder={currentRecvLib ?? '0x…'} />
-          <ChainSwitch label="Requires:" requiredChainId={remoteChain.chainId}
-            requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
-            isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
-          <button className="btn btn-primary"
-            disabled={!isConnected || connectedChainId !== remoteChain.chainId || !recvLib}
-            onClick={async () => {
-              setRecvTx({ status: 'pending' });
-              setRecvTx(await epConfig.setReceiveLib(remoteChain.endpoint, peerAddr, homeChain.eid, recvLib));
-            }}>
-            Set Receive Library
-          </button>
-          <div style={{ marginTop: 6 }}><TxStatus state={recvTx} /></div>
-        </div>
+        {isRemoteEvm && (
+          <div>
+            <div className="label" style={{ marginBottom: 8 }}>Receive library (remote chain — {remoteChain.name})</div>
+            <Field label="Receive lib address (ULN302)" value={recvLib} onChange={setRecvLib}
+              placeholder={currentRecvLib ?? '0x…'} />
+            <ChainSwitch label="Requires:" requiredChainId={remoteChain.chainId}
+              requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
+              isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
+            <button className="btn btn-primary"
+              disabled={!isConnected || connectedChainId !== remoteChain.chainId || !recvLib}
+              onClick={async () => {
+                setRecvTx({ status: 'pending' });
+                setRecvTx(await epConfig.setReceiveLib(remoteChain.endpoint, peerAddr, homeChain.eid, recvLib));
+              }}>
+              Set Receive Library
+            </button>
+            <div style={{ marginTop: 6 }}><TxStatus state={recvTx} /></div>
+          </div>
+        )}
       </div>
     </StepCard>
   );
@@ -407,7 +430,7 @@ function Step3Libraries({ open, onToggle, homeChain, remoteChain, adapterAddr, p
 // ── Step 4 — DVN & Executor ───────────────────────────────────────────────────
 
 function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAddr,
-  connectedChainId, isConnected, signer, onSwitchNetwork, verifyResult }: {
+  connectedChainId, isConnected, signer, onSwitchNetwork, verifyResult, isRemoteEvm = true }: {
   open: boolean; onToggle: () => void;
   homeChain: LZChain; remoteChain: LZChain;
   adapterAddr: string; peerAddr: string;
@@ -415,6 +438,7 @@ function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAdd
   signer: JsonRpcSigner | null;
   onSwitchNetwork: (id: number) => void;
   verifyResult: PathwayVerifyResult | null;
+  isRemoteEvm?: boolean;
 }): JSX.Element {
   const epConfig = useEndpointConfig(signer);
   const { dvns: homeDVNs } = useDVNCatalog(homeChain.chainKey);
@@ -423,8 +447,8 @@ function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAdd
   const [selectedHome, setSelectedHome] = useState<Map<string, DVNProvider>>(new Map());
   const [selectedRemote, setSelectedRemote] = useState<Map<string, DVNProvider>>(new Map());
   const [confirmations, setConfirmations] = useState('15');
-  const [sendLib, setSendLib] = useState(verifyResult?.homeSendLib ?? '');
-  const [recvLib, setRecvLib] = useState(verifyResult?.remoteReceiveLib ?? '');
+  const [sendLib, setSendLib] = useState(verifyResult?.homeSendLib ?? homeChain.sendLib ?? '');
+  const [recvLib, setRecvLib] = useState(verifyResult?.remoteReceiveLib ?? (isRemoteEvm ? remoteChain.receiveLib : undefined) ?? '');
   const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
   const [recvTx, setRecvTx] = useState<TxState>({ status: 'idle' });
 
@@ -546,32 +570,34 @@ function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAdd
           </div>
         </div>
 
-        {/* Remote chain */}
-        <div>
-          <div className="label" style={{ marginBottom: 6 }}>DVNs — {remoteChain.name} (receive config)</div>
-          <DVNDropdown chainKey={remoteChain.chainKey} selected={selectedRemote} onToggle={toggleRemote} />
-          <div style={{ marginTop: 10 }}>
-            <Field label="Receive lib (from step 3)" value={recvLib} onChange={setRecvLib}
-              placeholder={remoteChain.receiveLib ?? verifyResult?.remoteReceiveLib ?? '0x…'} />
-            <ChainSwitch label="Requires:" requiredChainId={remoteChain.chainId}
-              requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
-              isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
-            <button className="btn btn-primary"
-              disabled={!isConnected || connectedChainId !== remoteChain.chainId || selectedRemote.size === 0 || !(recvLib || remoteChain.receiveLib || verifyResult?.remoteReceiveLib)}
-              onClick={async () => {
-                setRecvTx({ status: 'pending' });
-                const lib = (recvLib || remoteChain.receiveLib || verifyResult?.remoteReceiveLib) ?? '';
-                const dvns = [...selectedRemote.values()].map((p) => p.address);
-                setRecvTx(await epConfig.setULNConfig(
-                  remoteChain.endpoint, peerAddr, lib, homeChain.eid,
-                  { confirmations: Number(confirmations), requiredDVNs: dvns },
-                ));
-              }}>
-              Set Receive Config
-            </button>
-            <div style={{ marginTop: 6 }}><TxStatus state={recvTx} /></div>
+        {/* Remote chain — hidden when remote is not EVM */}
+        {isRemoteEvm && (
+          <div>
+            <div className="label" style={{ marginBottom: 6 }}>DVNs — {remoteChain.name} (receive config)</div>
+            <DVNDropdown chainKey={remoteChain.chainKey} selected={selectedRemote} onToggle={toggleRemote} />
+            <div style={{ marginTop: 10 }}>
+              <Field label="Receive lib (from step 3)" value={recvLib} onChange={setRecvLib}
+                placeholder={remoteChain.receiveLib ?? verifyResult?.remoteReceiveLib ?? '0x…'} />
+              <ChainSwitch label="Requires:" requiredChainId={remoteChain.chainId}
+                requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
+                isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
+              <button className="btn btn-primary"
+                disabled={!isConnected || connectedChainId !== remoteChain.chainId || selectedRemote.size === 0 || !(recvLib || remoteChain.receiveLib || verifyResult?.remoteReceiveLib)}
+                onClick={async () => {
+                  setRecvTx({ status: 'pending' });
+                  const lib = (recvLib || remoteChain.receiveLib || verifyResult?.remoteReceiveLib) ?? '';
+                  const dvns = [...selectedRemote.values()].map((p) => p.address);
+                  setRecvTx(await epConfig.setULNConfig(
+                    remoteChain.endpoint, peerAddr, lib, homeChain.eid,
+                    { confirmations: Number(confirmations), requiredDVNs: dvns },
+                  ));
+                }}>
+                Set Receive Config
+              </button>
+              <div style={{ marginTop: 6 }}><TxStatus state={recvTx} /></div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </StepCard>
   );
@@ -590,13 +616,14 @@ function DVNChip({ name, addr, color }: { name: string; addr: string; color: str
 // ── Step 5 — Set Peers ────────────────────────────────────────────────────────
 
 function Step5Peers({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAddr,
-  connectedChainId, isConnected, onSwitchNetwork, wiring, verifyResult }: {
+  connectedChainId, isConnected, onSwitchNetwork, wiring, verifyResult, isRemoteEvm = true }: {
   open: boolean; onToggle: () => void;
   homeChain: LZChain; remoteChain: LZChain;
   adapterAddr: string; peerAddr: string;
   connectedChainId: number | null; isConnected: boolean;
   onSwitchNetwork: (id: number) => void;
   wiring: Wiring; verifyResult: PathwayVerifyResult | null;
+  isRemoteEvm?: boolean;
 }): JSX.Element {
   const [confirmed, setConfirmed] = useState(false);
   const [adapterTx, setAdapterTx] = useState<TxState>({ status: 'idle' });
@@ -640,17 +667,24 @@ function Step5Peers({ open, onToggle, homeChain, remoteChain, adapterAddr, peerA
           </button>
           <div style={{ marginTop: 6 }}><TxStatus state={adapterTx} /></div>
         </div>
-        <div>
-          <ChainSwitch label="Peer (remote):" requiredChainId={remoteChain.chainId}
-            requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
-            isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
-          <button className="btn btn-primary"
-            disabled={!confirmed || !isConnected || connectedChainId !== remoteChain.chainId}
-            onClick={async () => { setPeerTx({ status: 'pending' }); setPeerTx(await wiring.setEvmPeer(peerAddr, homeChain.eid, adapterAddr)); }}>
-            Set Peer on Peer contract
-          </button>
-          <div style={{ marginTop: 6 }}><TxStatus state={peerTx} /></div>
-        </div>
+        {isRemoteEvm && (
+          <div>
+            <ChainSwitch label="Peer (remote):" requiredChainId={remoteChain.chainId}
+              requiredChainName={remoteChain.name} connectedChainId={connectedChainId}
+              isConnected={isConnected} onSwitch={() => onSwitchNetwork(remoteChain.chainId)} />
+            <button className="btn btn-primary"
+              disabled={!confirmed || !isConnected || connectedChainId !== remoteChain.chainId}
+              onClick={async () => { setPeerTx({ status: 'pending' }); setPeerTx(await wiring.setEvmPeer(peerAddr, homeChain.eid, adapterAddr)); }}>
+              Set Peer on Peer contract
+            </button>
+            <div style={{ marginTop: 6 }}><TxStatus state={peerTx} /></div>
+          </div>
+        )}
+        {!isRemoteEvm && (
+          <div style={{ fontSize: 12, color: '#888', padding: '8px 0' }}>
+            Starknet peer is set in step 6 below.
+          </div>
+        )}
       </div>
     </StepCard>
   );

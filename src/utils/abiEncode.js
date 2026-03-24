@@ -1,0 +1,11 @@
+import { Interface } from 'ethers';
+import AdminGatewayABI from '@/abis/AdminGateway.json';
+const iface = new Interface(AdminGatewayABI);
+export const encodeRegisterVault = (vault, pool, share, oft) => iface.encodeFunctionData('registerVault', [vault, pool, share, oft]);
+export const encodeSetVaultState = (vaultId, state) => iface.encodeFunctionData('setVaultState', [vaultId, state]);
+export const encodeSetVaultOft = (vaultId, oft) => iface.encodeFunctionData('setVaultOft', [vaultId, oft]);
+export const encodeSetPerformanceFeeBps = (vaultId, bps) => iface.encodeFunctionData('setPerformanceFeeBps', [vaultId, bps]);
+export const encodeSetMaintenanceFeeBps = (vaultId, bps) => iface.encodeFunctionData('setMaintenanceFeeBps', [vaultId, bps]);
+export const encodeSetFeeRecipient = (vaultId, recipient) => iface.encodeFunctionData('setFeeRecipient', [vaultId, recipient]);
+export const encodeSetKeeper = (vaultId, keeper) => iface.encodeFunctionData('setKeeper', [vaultId, keeper]);
+export const encodeSetAllocator = (vaultId, allocator) => iface.encodeFunctionData('setAllocator', [vaultId, allocator]);

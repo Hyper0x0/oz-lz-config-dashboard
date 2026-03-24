@@ -25,6 +25,32 @@ export interface LZChain {
   receiveLib?: string;
 }
 
+export interface StarknetChain {
+  kind: 'starknet';
+  eid: number;
+  chainId: string;   // 'SN_SEPOLIA' | 'SN_MAIN'
+  name: string;
+  rpc: string;
+  endpoint: string;
+  isTestnet: boolean;
+  /** Key used in the LayerZero DVN metadata API (e.g. "starknet-sepolia") */
+  chainKey: string;
+  /** SendUln302 address (same as receiveLib on Starknet) */
+  sendLib?: string;
+  /** ReceiveUln302 address (same as sendLib on Starknet) */
+  receiveLib?: string;
+  /** Default executor address */
+  executor?: string;
+}
+
+/** Discriminated union covering both EVM and Starknet chains. */
+export type AnyChain =
+  | (LZChain & { kind: 'evm' })
+  | StarknetChain;
+
+export function isStarknet(c: AnyChain): c is StarknetChain { return c.kind === 'starknet'; }
+export function isEvm(c: AnyChain): c is LZChain & { kind: 'evm' } { return c.kind === 'evm'; }
+
 const MAINNET_ENDPOINT = '0x1a44076050125825900e736c501f859c50fe728c';
 const TESTNET_ENDPOINT = '0x6EDCE65403992e310A62460808c4b910D972f10f';
 

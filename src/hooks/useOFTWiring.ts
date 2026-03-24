@@ -3,7 +3,7 @@ import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunn
 import OFTAdapterABI from '@/abis/OFTAdapter.json';
 import OFTABI from '@/abis/OFT.json';
 import ERC20ABI from '@/abis/ERC20.json';
-import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo } from '@/types';
+import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo, PeerEntry } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import { feltToBytes32, evmToFelt } from '@/utils/cairoAddress';
 
@@ -11,8 +11,12 @@ const SEND_MSG_TYPE = 1;
 
 interface OFTWiring {
   readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider) => Promise<TokenInfo>;
+  /** Read name + symbol from a single EVM OFT or Adapter. For adapters, follows token() first. */
+  readEvmSideInfo: (addr: string, rpc: string, isAdapterSide: boolean) => Promise<{ name: string; symbol: string }>;
   readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string) => Promise<AdapterState>;
   readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string) => Promise<PeerState>;
+  /** Query peers(eid) for every entry in eidList and return results. Zero bytes32 = null. */
+  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>) => Promise<PeerEntry[]>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
   setEvmPeerToCairo: (adapterAddr: string, cairoEid: number, cairoAddrFelt: string) => Promise<TxState>;
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
@@ -50,6 +54,23 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         peer.symbol(),
       ]);
       return { tokenName, tokenSymbol, peerName, peerSymbol };
+    },
+    [],
+  );
+
+  const readEvmSideInfo = useCallback(
+    async (addr: string, rpc: string, isAdapterSide: boolean): Promise<{ name: string; symbol: string }> => {
+      const provider = new JsonRpcProvider(rpc);
+      if (isAdapterSide) {
+        const adapter = adapterContract(addr, provider);
+        const tokenAddr = await adapter.token();
+        const erc20 = new Contract(tokenAddr, ERC20ABI, provider) as unknown as IERC20Read;
+        const [name, symbol] = await Promise.all([erc20.name(), erc20.symbol()]);
+        return { name, symbol };
+      }
+      const oft = peerContract(addr, provider);
+      const [name, symbol] = await Promise.all([oft.name(), oft.symbol()]);
+      return { name, symbol };
     },
     [],
   );
@@ -94,6 +115,22 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         c.enforcedOptions(adapterEid, SEND_MSG_TYPE),
       ]);
       return { owner, peer, enforcedOptionsSend: opts };
+    },
+    [],
+  );
+
+  const readAllPeers = useCallback(
+    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>): Promise<PeerEntry[]> => {
+      const provider = new JsonRpcProvider(homeRpc);
+      const c = adapterContract(bridgeAddr, provider);
+      const settled = await Promise.allSettled(eidList.map((item) => c.peers(item.eid)));
+      const ZERO = /^0x0+$/;
+      return eidList.map((item, i) => {
+        const res = settled[i];
+        if (res.status === 'rejected') return { ...item, peer: null, error: true };
+        const bytes32 = res.value as string;
+        return { ...item, peer: ZERO.test(bytes32) ? null : bytes32 };
+      });
     },
     [],
   );
@@ -195,8 +232,10 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   return {
     readTokenInfo,
+    readEvmSideInfo,
     readAdapterState,
     readPeerState,
+    readAllPeers,
     setEvmPeer,
     setEvmPeerToCairo,
     setEvmEnforcedOptions,

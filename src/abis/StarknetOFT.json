@@ -1,0 +1,80 @@
+[
+  {
+    "type": "struct",
+    "name": "lz_utils::bytes::Bytes32",
+    "members": [
+      { "name": "value", "type": "core::integer::u256" }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "core::integer::u256",
+    "members": [
+      { "name": "low",  "type": "core::integer::u128" },
+      { "name": "high", "type": "core::integer::u128" }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam",
+    "members": [
+      { "name": "eid",      "type": "core::integer::u32" },
+      { "name": "msg_type", "type": "core::integer::u16" },
+      { "name": "options",  "type": "core::byte_array::ByteArray" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "set_peer",
+    "inputs": [
+      { "name": "eid",  "type": "core::integer::u32" },
+      { "name": "peer", "type": "lz_utils::bytes::Bytes32" }
+    ],
+    "outputs": [],
+    "state_mutability": "external"
+  },
+  {
+    "type": "function",
+    "name": "get_peer",
+    "inputs": [
+      { "name": "eid", "type": "core::integer::u32" }
+    ],
+    "outputs": [
+      { "type": "lz_utils::bytes::Bytes32" }
+    ],
+    "state_mutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "set_enforced_options",
+    "inputs": [
+      {
+        "name": "params",
+        "type": "core::array::Array::<layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam>"
+      }
+    ],
+    "outputs": [],
+    "state_mutability": "external"
+  },
+  {
+    "type": "function",
+    "name": "get_enforced_options",
+    "inputs": [
+      { "name": "dst_eid",  "type": "core::integer::u32" },
+      { "name": "msg_type", "type": "core::integer::u16" }
+    ],
+    "outputs": [
+      { "type": "core::byte_array::ByteArray" }
+    ],
+    "state_mutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "set_delegate",
+    "inputs": [
+      { "name": "delegate", "type": "core::starknet::contract_address::ContractAddress" }
+    ],
+    "outputs": [],
+    "state_mutability": "external"
+  }
+]

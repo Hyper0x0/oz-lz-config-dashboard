@@ -1,36 +1,47 @@
-/**
- * TODO: implement when Cairo OFT contracts are deployed.
- *
- * Expected implementation (starknetkit v2 + starknet.js v6):
- *
- *   import { connect } from 'starknetkit';
- *   import { WalletAccount, RpcProvider } from 'starknet';
- *
- *   const { wallet } = await connect({ modalMode: 'alwaysAsk' });
- *   const provider = new RpcProvider({ nodeUrl: VITE_STARKNET_RPC });
- *   const account = new WalletAccount(provider, wallet);
- *
- * Verify exact API against the installed starknetkit version before wiring.
- */
-
 import { useState, useCallback } from 'react';
+import { connect, disconnect } from 'starknetkit';
+import { WalletAccount, RpcProvider } from 'starknet';
+import { STARKNET_TESTNET } from '@/config/chains';
 
-interface StarknetWallet {
-  // WalletAccount from starknet.js — typed as unknown until Cairo contracts are ready
-  account: unknown;
+export interface StarknetWallet {
+  account: WalletAccount | null;
   address: string | null;
+  chainId: string | null;
   isConnected: boolean;
   connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
 }
 
 export function useStarknetWallet(): StarknetWallet {
-  const [account] = useState<unknown>(null);
-  const [address] = useState<string | null>(null);
+  const [account, setAccount] = useState<WalletAccount | null>(null);
+  const [address, setAddress] = useState<string | null>(null);
+  const [chainId, setChainId] = useState<string | null>(null);
 
-  const connect = useCallback(async (): Promise<void> => {
-    // TODO: implement starknetkit connect
-    throw new Error('Starknet wallet not yet implemented — Cairo contracts pending');
+  const connectWallet = useCallback(async (): Promise<void> => {
+    const { connector, connectorData, wallet } = await connect({ modalMode: 'alwaysAsk' });
+    if (!connector || !connectorData?.account || !wallet) return;
+
+    const provider = new RpcProvider({ nodeUrl: STARKNET_TESTNET.rpc });
+    const acc = await WalletAccount.connect(provider, wallet);
+
+    setAccount(acc);
+    setAddress(connectorData.account);
+    setChainId(connectorData.chainId ? String(connectorData.chainId) : null);
   }, []);
 
-  return { account, address, isConnected: false, connect };
+  const disconnectWallet = useCallback(async (): Promise<void> => {
+    await disconnect();
+    setAccount(null);
+    setAddress(null);
+    setChainId(null);
+  }, []);
+
+  return {
+    account,
+    address,
+    chainId,
+    isConnected: !!account,
+    connect: connectWallet,
+    disconnect: disconnectWallet,
+  };
 }

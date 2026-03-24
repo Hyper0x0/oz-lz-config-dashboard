@@ -1,0 +1,2121 @@
+[
+  {
+    "type": "impl",
+    "name": "EndpointV2Impl",
+    "interface_name": "layerzero::endpoint::interfaces::endpoint_v2::IEndpointV2"
+  },
+  {
+    "type": "struct",
+    "name": "core::integer::u256",
+    "members": [
+      {
+        "name": "low",
+        "type": "core::integer::u128"
+      },
+      {
+        "name": "high",
+        "type": "core::integer::u128"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "lz_utils::bytes::Bytes32",
+    "members": [
+      {
+        "name": "value",
+        "type": "core::integer::u256"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "core::byte_array::ByteArray",
+    "members": [
+      {
+        "name": "data",
+        "type": "core::array::Array::<core::bytes_31::bytes31>"
+      },
+      {
+        "name": "pending_word",
+        "type": "core::felt252"
+      },
+      {
+        "name": "pending_word_len",
+        "type": "core::internal::bounded_int::BoundedInt::<0, 30>"
+      }
+    ]
+  },
+  {
+    "type": "enum",
+    "name": "core::bool",
+    "variants": [
+      {
+        "name": "False",
+        "type": "()"
+      },
+      {
+        "name": "True",
+        "type": "()"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::common::structs::messaging::MessagingParams",
+    "members": [
+      {
+        "name": "dst_eid",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "receiver",
+        "type": "lz_utils::bytes::Bytes32"
+      },
+      {
+        "name": "message",
+        "type": "core::byte_array::ByteArray"
+      },
+      {
+        "name": "options",
+        "type": "core::byte_array::ByteArray"
+      },
+      {
+        "name": "pay_in_lz_token",
+        "type": "core::bool"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::common::structs::messaging::Payee",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "native_amount",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "lz_token_amount",
+        "type": "core::integer::u256"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::common::structs::messaging::MessageReceipt",
+    "members": [
+      {
+        "name": "guid",
+        "type": "lz_utils::bytes::Bytes32"
+      },
+      {
+        "name": "nonce",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "payees",
+        "type": "core::array::Array::<layerzero::common::structs::messaging::Payee>"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::common::structs::messaging::MessagingFee",
+    "members": [
+      {
+        "name": "native_fee",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "lz_token_fee",
+        "type": "core::integer::u256"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::common::structs::packet::Origin",
+    "members": [
+      {
+        "name": "src_eid",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "sender",
+        "type": "lz_utils::bytes::Bytes32"
+      },
+      {
+        "name": "nonce",
+        "type": "core::integer::u64"
+      }
+    ]
+  },
+  {
+    "type": "enum",
+    "name": "layerzero::endpoint::interfaces::endpoint_v2::ExecutionState",
+    "variants": [
+      {
+        "name": "NotExecutable",
+        "type": "()"
+      },
+      {
+        "name": "VerifiedButNotExecutable",
+        "type": "()"
+      },
+      {
+        "name": "Executable",
+        "type": "()"
+      },
+      {
+        "name": "Executed",
+        "type": "()"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "layerzero::endpoint::interfaces::endpoint_v2::IEndpointV2",
+    "items": [
+      {
+        "type": "function",
+        "name": "send",
+        "inputs": [
+          {
+            "name": "params",
+            "type": "layerzero::common::structs::messaging::MessagingParams"
+          },
+          {
+            "name": "refund_address",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::common::structs::messaging::MessageReceipt"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "quote",
+        "inputs": [
+          {
+            "name": "params",
+            "type": "layerzero::common::structs::messaging::MessagingParams"
+          },
+          {
+            "name": "sender",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::common::structs::messaging::MessagingFee"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "verify",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "payload_hash",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "lz_receive",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "value",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "lz_receive_alert",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "gas",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "value",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "reason",
+            "type": "core::array::Array::<core::felt252>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "clear",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_lz_token",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_eid",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_lz_token",
+        "inputs": [
+          {
+            "name": "lz_token_address",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_delegate",
+        "inputs": [
+          {
+            "name": "delegate",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_delegate",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "initializable",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "verifiable",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "verifiable_with_receive_lib",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "receive_lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "executable",
+        "inputs": [
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::endpoint::interfaces::endpoint_v2::ExecutionState"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "OwnableImpl",
+    "interface_name": "openzeppelin_access::ownable::interface::IOwnable"
+  },
+  {
+    "type": "interface",
+    "name": "openzeppelin_access::ownable::interface::IOwnable",
+    "items": [
+      {
+        "type": "function",
+        "name": "owner",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "transfer_ownership",
+        "inputs": [
+          {
+            "name": "new_owner",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "renounce_ownership",
+        "inputs": [],
+        "outputs": [],
+        "state_mutability": "external"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "MessageLibManagerImpl",
+    "interface_name": "layerzero::endpoint::message_lib_manager::interface::IMessageLibManager"
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::endpoint::message_lib_manager::structs::GetLibraryResponse",
+    "members": [
+      {
+        "name": "lib",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "is_default",
+        "type": "core::bool"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::endpoint::message_lib_manager::structs::Timeout",
+    "members": [
+      {
+        "name": "lib",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "expiry",
+        "type": "core::integer::u64"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::message_lib::structs::SetConfigParam",
+    "members": [
+      {
+        "name": "eid",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "config_type",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "config",
+        "type": "core::array::Array::<core::felt252>"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "layerzero::endpoint::message_lib_manager::interface::IMessageLibManager",
+    "items": [
+      {
+        "type": "function",
+        "name": "register_library",
+        "inputs": [
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_registered_libraries",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::starknet::contract_address::ContractAddress>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_registered_library",
+        "inputs": [
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_send_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_send_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "dst_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::endpoint::message_lib_manager::structs::GetLibraryResponse"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_raw_send_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "dst_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_default_send_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "dst_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_default_send_library",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_default_send_library",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_receive_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "grace_period",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_receive_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::endpoint::message_lib_manager::structs::GetLibraryResponse"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_raw_receive_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_valid_receive_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_default_receive_library",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "grace_period",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_default_receive_library",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_default_receive_library",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_receive_library_timeout",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "expiry",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_receive_library_timeout",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::endpoint::message_lib_manager::structs::Timeout"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_default_receive_library_timeout",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "expiry",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_default_receive_library_timeout",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "layerzero::endpoint::message_lib_manager::structs::Timeout"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_send_configs",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "params",
+            "type": "core::array::Array::<layerzero::message_lib::structs::SetConfigParam>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_send_config",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "config_type",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::felt252>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "set_receive_configs",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "params",
+            "type": "core::array::Array::<layerzero::message_lib::structs::SetConfigParam>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_receive_config",
+        "inputs": [
+          {
+            "name": "oapp",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "lib",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "config_type",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::felt252>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_supported_eid",
+        "inputs": [
+          {
+            "name": "eid",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "MessagingChannelImpl",
+    "interface_name": "layerzero::endpoint::messaging_channel::interface::IMessagingChannel"
+  },
+  {
+    "type": "interface",
+    "name": "layerzero::endpoint::messaging_channel::interface::IMessagingChannel",
+    "items": [
+      {
+        "type": "function",
+        "name": "inbound_nonce",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "sender",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "outbound_nonce",
+        "inputs": [
+          {
+            "name": "sender",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "dst_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "receiver",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "inbound_payload_hash",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "sender",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "nonce",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "lazy_inbound_nonce",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "src_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "sender",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "skip",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "nilify",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "payload_hash",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "burn",
+        "inputs": [
+          {
+            "name": "receiver",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "origin",
+            "type": "layerzero::common::structs::packet::Origin"
+          },
+          {
+            "name": "payload_hash",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "next_guid",
+        "inputs": [
+          {
+            "name": "sender",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "dst_eid",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "receiver",
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "MessagingComposerImpl",
+    "interface_name": "layerzero::endpoint::messaging_composer::interface::IMessagingComposer"
+  },
+  {
+    "type": "interface",
+    "name": "layerzero::endpoint::messaging_composer::interface::IMessagingComposer",
+    "items": [
+      {
+        "type": "function",
+        "name": "send_compose",
+        "inputs": [
+          {
+            "name": "to",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "index",
+            "type": "core::integer::u16"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "lz_compose",
+        "inputs": [
+          {
+            "name": "from",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "to",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "index",
+            "type": "core::integer::u16"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "value",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "lz_compose_alert",
+        "inputs": [
+          {
+            "name": "from",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "to",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "index",
+            "type": "core::integer::u16"
+          },
+          {
+            "name": "gas",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "value",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "message",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
+            "name": "reason",
+            "type": "core::array::Array::<core::felt252>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_compose_queue",
+        "inputs": [
+          {
+            "name": "from",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "to",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "guid",
+            "type": "lz_utils::bytes::Bytes32"
+          },
+          {
+            "name": "index",
+            "type": "core::integer::u16"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "lz_utils::bytes::Bytes32"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "constructor",
+    "name": "constructor",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "eid",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "native_token_address",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "blocked_library",
+        "type": "core::starknet::contract_address::ContractAddress"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::PacketSent",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "encoded_packet",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "options",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "send_library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::PacketVerified",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "origin",
+        "type": "layerzero::common::structs::packet::Origin",
+        "kind": "key"
+      },
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "payload_hash",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::PacketDelivered",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "origin",
+        "type": "layerzero::common::structs::packet::Origin",
+        "kind": "key"
+      },
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::LzTokenSet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "lz_token_address",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::LzReceiveAlert",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "origin",
+        "type": "layerzero::common::structs::packet::Origin",
+        "kind": "key"
+      },
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "executor",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "guid",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "gas",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "value",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "message",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "extra_data",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "reason",
+        "type": "core::array::Array::<core::felt252>",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::events::DelegateSet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "oapp",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "delegate",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferred",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "previous_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "new_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferStarted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "previous_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "new_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "OwnershipTransferred",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferred",
+        "kind": "nested"
+      },
+      {
+        "name": "OwnershipTransferStarted",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferStarted",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
+    "kind": "enum",
+    "variants": []
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_channel::events::InboundNonceSkipped",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "src_eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "sender",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "nonce",
+        "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_channel::events::PacketNilified",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "src_eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "sender",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "nonce",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "payload_hash",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_channel::events::PacketBurnt",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "src_eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "sender",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "nonce",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "payload_hash",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_channel::messaging_channel::MessagingChannelComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "InboundNonceSkipped",
+        "type": "layerzero::endpoint::messaging_channel::events::InboundNonceSkipped",
+        "kind": "nested"
+      },
+      {
+        "name": "PacketNilified",
+        "type": "layerzero::endpoint::messaging_channel::events::PacketNilified",
+        "kind": "nested"
+      },
+      {
+        "name": "PacketBurnt",
+        "type": "layerzero::endpoint::messaging_channel::events::PacketBurnt",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::LibraryRegistered",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::SendLibrarySet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "sender",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "dst_eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::ReceiveLibrarySet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "src_eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::DefaultSendLibrarySet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::DefaultReceiveLibrarySet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::ReceiveLibraryTimeoutSet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "receiver",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "expiry",
+        "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::events::DefaultReceiveLibraryTimeoutSet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "eid",
+        "type": "core::integer::u32",
+        "kind": "key"
+      },
+      {
+        "name": "library",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "expiry",
+        "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::message_lib_manager::message_lib_manager::MessageLibManagerComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "LibraryRegistered",
+        "type": "layerzero::endpoint::message_lib_manager::events::LibraryRegistered",
+        "kind": "nested"
+      },
+      {
+        "name": "SendLibrarySet",
+        "type": "layerzero::endpoint::message_lib_manager::events::SendLibrarySet",
+        "kind": "nested"
+      },
+      {
+        "name": "ReceiveLibrarySet",
+        "type": "layerzero::endpoint::message_lib_manager::events::ReceiveLibrarySet",
+        "kind": "nested"
+      },
+      {
+        "name": "DefaultSendLibrarySet",
+        "type": "layerzero::endpoint::message_lib_manager::events::DefaultSendLibrarySet",
+        "kind": "nested"
+      },
+      {
+        "name": "DefaultReceiveLibrarySet",
+        "type": "layerzero::endpoint::message_lib_manager::events::DefaultReceiveLibrarySet",
+        "kind": "nested"
+      },
+      {
+        "name": "ReceiveLibraryTimeoutSet",
+        "type": "layerzero::endpoint::message_lib_manager::events::ReceiveLibraryTimeoutSet",
+        "kind": "nested"
+      },
+      {
+        "name": "DefaultReceiveLibraryTimeoutSet",
+        "type": "layerzero::endpoint::message_lib_manager::events::DefaultReceiveLibraryTimeoutSet",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_composer::events::ComposeSent",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "from",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "to",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "guid",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "index",
+        "type": "core::integer::u16",
+        "kind": "data"
+      },
+      {
+        "name": "message",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_composer::events::ComposeDelivered",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "from",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "to",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "guid",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "index",
+        "type": "core::integer::u16",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_composer::events::LzComposeAlert",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "from",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "to",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "executor",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "guid",
+        "type": "lz_utils::bytes::Bytes32",
+        "kind": "key"
+      },
+      {
+        "name": "index",
+        "type": "core::integer::u16",
+        "kind": "data"
+      },
+      {
+        "name": "gas",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "value",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "message",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "extra_data",
+        "type": "core::byte_array::ByteArray",
+        "kind": "data"
+      },
+      {
+        "name": "reason",
+        "type": "core::array::Array::<core::felt252>",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::messaging_composer::messaging_composer::MessagingComposerComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "ComposeSent",
+        "type": "layerzero::endpoint::messaging_composer::events::ComposeSent",
+        "kind": "nested"
+      },
+      {
+        "name": "ComposeDelivered",
+        "type": "layerzero::endpoint::messaging_composer::events::ComposeDelivered",
+        "kind": "nested"
+      },
+      {
+        "name": "LzComposeAlert",
+        "type": "layerzero::endpoint::messaging_composer::events::LzComposeAlert",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "layerzero::endpoint::endpoint_v2::EndpointV2::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "PacketSent",
+        "type": "layerzero::endpoint::events::PacketSent",
+        "kind": "nested"
+      },
+      {
+        "name": "PacketVerified",
+        "type": "layerzero::endpoint::events::PacketVerified",
+        "kind": "nested"
+      },
+      {
+        "name": "PacketDelivered",
+        "type": "layerzero::endpoint::events::PacketDelivered",
+        "kind": "nested"
+      },
+      {
+        "name": "LzTokenSet",
+        "type": "layerzero::endpoint::events::LzTokenSet",
+        "kind": "nested"
+      },
+      {
+        "name": "LzReceiveAlert",
+        "type": "layerzero::endpoint::events::LzReceiveAlert",
+        "kind": "nested"
+      },
+      {
+        "name": "DelegateSet",
+        "type": "layerzero::endpoint::events::DelegateSet",
+        "kind": "nested"
+      },
+      {
+        "name": "OwnableEvent",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "ReentrancyGuardEvent",
+        "type": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "MessagingChannelEvent",
+        "type": "layerzero::endpoint::messaging_channel::messaging_channel::MessagingChannelComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "MessageLibManagerEvent",
+        "type": "layerzero::endpoint::message_lib_manager::message_lib_manager::MessageLibManagerComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "MessagingComposerEvent",
+        "type": "layerzero::endpoint::messaging_composer::messaging_composer::MessagingComposerComponent::Event",
+        "kind": "flat"
+      }
+    ]
+  }
+]

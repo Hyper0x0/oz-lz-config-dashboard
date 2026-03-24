@@ -306,6 +306,78 @@ export function useLZVerify() {
     return { ...full, checks, error };
   }, []);
 
-  return { verify };
+  /**
+   * Read the EVM side of a mixed EVM↔Starknet pathway.
+   * Returns structured state for use in StarknetVerifyPanel.
+   */
+  const readEvmSideForStarknet = useCallback(async (
+    evmOftAddr: string,
+    remoteEid: number,
+    chain: LZChain,
+  ): Promise<{
+    sendLib: string | null;
+    recvLib: string | null;
+    recvLibIsDefault: boolean;
+    delegate: string | null;
+    executor: ExecutorConfig | null;
+    dvnSend: UlnConfig | null;
+    dvnRecv: UlnConfig | null;
+    enforcedOptions: string | null;
+    peer: string | null;
+  }> => {
+    const nullResult = {
+      sendLib: null, recvLib: null, recvLibIsDefault: false,
+      delegate: null, executor: null, dvnSend: null, dvnRecv: null,
+      enforcedOptions: null, peer: null,
+    };
+    try {
+      const provider = new JsonRpcProvider(chain.rpc);
+      const ep = endpointContract(chain.endpoint, provider);
+      const oft = new Contract(evmOftAddr, OFTABI, provider) as unknown as IOFTPeer;
+
+      const [sendLib, delegate, peer, enforcedOptions] = await Promise.all([
+        ep.getSendLibrary(evmOftAddr, remoteEid),
+        ep.delegates(evmOftAddr),
+        oft.peers(remoteEid),
+        oft.enforcedOptions(remoteEid, SEND_MSG_TYPE),
+      ]);
+
+      const [recvLibRaw] = await Promise.all([ep.getReceiveLibrary(evmOftAddr, remoteEid)]);
+      const [recvLib, recvLibIsDefault] = recvLibRaw;
+
+      let executor: ExecutorConfig | null = null;
+      let dvnSend: UlnConfig | null = null;
+      if (sendLib && sendLib !== ZeroAddress) {
+        const [execRaw, ulnRaw] = await Promise.all([
+          ep.getConfig(evmOftAddr, sendLib, remoteEid, CONFIG_TYPE_EXECUTOR),
+          ep.getConfig(evmOftAddr, sendLib, remoteEid, CONFIG_TYPE_ULN),
+        ]);
+        executor = decodeExecutor(execRaw);
+        dvnSend = decodeUln(ulnRaw);
+      }
+
+      let dvnRecv: UlnConfig | null = null;
+      if (recvLib && recvLib !== ZeroAddress) {
+        const dvnRaw = await ep.getConfig(evmOftAddr, recvLib, remoteEid, CONFIG_TYPE_ULN);
+        dvnRecv = decodeUln(dvnRaw);
+      }
+
+      return {
+        sendLib: sendLib ?? null,
+        recvLib: recvLib ?? null,
+        recvLibIsDefault,
+        delegate: delegate ?? null,
+        executor,
+        dvnSend,
+        dvnRecv,
+        enforcedOptions: enforcedOptions ?? null,
+        peer: peer ?? null,
+      };
+    } catch {
+      return nullResult;
+    }
+  }, []);
+
+  return { verify, readEvmSideForStarknet };
 }
 
