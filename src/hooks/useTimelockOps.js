@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, ZeroHash } from 'ethers';
-import TimelockControllerABI from '@/abis/TimelockController.json';
+import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import { operationStateLabel } from '@/utils/timelock';
 import { ARB_SEPOLIA } from '@/config/chains';
 const ZERO_BYTES32 = ZeroHash;

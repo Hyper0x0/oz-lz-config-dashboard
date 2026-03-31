@@ -18,6 +18,8 @@ async function fetchChains() {
     })
         .then((raw) => {
         const chains = [];
+        // Index static catalog by EID for fallback RPC lookup
+        const staticByEid = Object.fromEntries(LZ_CHAINS.map((c) => [c.eid, c]));
         for (const [chainKey, entry] of Object.entries(raw)) {
             if (!entry)
                 continue;
@@ -35,12 +37,16 @@ async function fetchChains() {
             if (!v2)
                 continue;
             const eid = Number(v2.eid);
-            const endpoint = v2.endpointV2?.address;
-            if (!endpoint)
+            const apiEndpoint = v2.endpointV2?.address;
+            if (!apiEndpoint)
                 continue;
             // Skip non-EVM (addresses won't be 0x hex)
-            if (!endpoint.startsWith('0x'))
+            if (!apiEndpoint.startsWith('0x'))
                 continue;
+            // If the API returns a non-standard endpoint, fall back to the known static entry.
+            // All LZ V2 EVM chains use the same endpoint address.
+            const staticEntry = staticByEid[eid];
+            const endpoint = staticEntry?.endpoint ?? apiEndpoint;
             const rpc = entry.rpcs?.find((r) => r.url)?.url ?? '';
             if (!rpc)
                 continue;
@@ -55,6 +61,8 @@ async function fetchChains() {
                 name: displayName,
                 endpoint,
                 rpc,
+                // Inherit fallback RPC from static catalog for known chains
+                rpcFallback: staticEntry?.rpcFallback,
                 isTestnet: env === 'testnet',
                 executor: v2.executor?.address,
                 sendLib: v2.sendUln302?.address,

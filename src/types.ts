@@ -86,6 +86,8 @@ export interface DVNProvider {
   address: string;
   /** Short colour key for the avatar (derived from name) */
   color: string;
+  /** Optional logo URL — set for known providers, undefined for unknown */
+  icon?: string;
 }
 
 export interface TokenInfo {

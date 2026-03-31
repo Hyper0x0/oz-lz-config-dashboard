@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { Contract, AbiCoder } from 'ethers';
-import EndpointV2ABI from '@/abis/EndpointV2.json';
+import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
 // configType constants (LZ V2 ULN)
 const CONFIG_TYPE_EXECUTOR = 1;
 const CONFIG_TYPE_ULN = 2;
@@ -9,7 +9,7 @@ function endpointWrite(endpointAddr, runner) {
 }
 /** ABI-encode a ULN config struct for endpoint.setConfig */
 function encodeULN(params) {
-    const sorted = [...params.requiredDVNs].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const sorted = [...params.requiredDVNs].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
     const optDVNs = params.optionalDVNs ?? [];
     const coder = AbiCoder.defaultAbiCoder();
     return coder.encode(['tuple(uint64 confirmations,uint8 requiredDVNCount,uint8 optionalDVNCount,uint8 optionalDVNThreshold,address[] requiredDVNs,address[] optionalDVNs)'], [{

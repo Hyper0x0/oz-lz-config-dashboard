@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner } from 'ethers';
-import OFTAdapterABI from '@/abis/OFTAdapter.json';
-import OFTABI from '@/abis/OFT.json';
-import ERC20ABI from '@/abis/ERC20.json';
+import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
+import OFTABI from '@/abis/evm/OFT.json';
+import ERC20ABI from '@/abis/evm/ERC20.json';
 import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo, PeerEntry } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import { feltToBytes32, evmToFelt } from '@/utils/cairoAddress';

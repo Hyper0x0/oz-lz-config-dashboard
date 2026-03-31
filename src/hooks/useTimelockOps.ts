@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcSigner, JsonRpcProvider, BrowserProvider, ContractRunner, ZeroHash } from 'ethers';
-import TimelockControllerABI from '@/abis/TimelockController.json';
+import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import type { TxState, OperationState, ITimelockController } from '@/types';
 import { operationStateLabel } from '@/utils/timelock';
 import { ARB_SEPOLIA } from '@/config/chains';

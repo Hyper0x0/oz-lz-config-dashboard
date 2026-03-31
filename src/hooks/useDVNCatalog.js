@@ -14,6 +14,45 @@ import { useState, useEffect, useRef } from 'react';
  *   }
  */
 const DVN_API = 'https://metadata.layerzero-api.com/v1/metadata/dvns';
+/**
+ * Logo URLs keyed by the canonical DVN `id` from the LZ metadata API.
+ * All use GitHub org avatars as a stable, cached CDN source.
+ * Unknown providers fall back to initials avatar.
+ */
+const DVN_ICONS = {
+    'layerzero-labs': 'https://github.com/LayerZero-Labs.png?size=32',
+    'google-cloud': 'https://github.com/google.png?size=32',
+    'nethermind': 'https://github.com/NethermindEth.png?size=32',
+    'polyhedra-network': 'https://github.com/Polyhedra-Network.png?size=32',
+    'horizen-labs': 'https://github.com/HorizenLabs.png?size=32',
+    'bitgo': 'https://github.com/BitGo.png?size=32',
+    'bware-labs': 'https://github.com/bwarelabs.png?size=32',
+    'axelar': 'https://github.com/axelarnetwork.png?size=32',
+    'stargate': 'https://github.com/stargate-protocol.png?size=32',
+    'ccip': 'https://github.com/smartcontractkit.png?size=32',
+    'mysten-labs': 'https://github.com/MystenLabs.png?size=32',
+    'lagrange-labs': 'https://github.com/Lagrange-Labs.png?size=32',
+    'deutsche-telekom': 'https://github.com/telekom.png?size=32',
+    'ubisoft': 'https://github.com/ubisoft.png?size=32',
+    'switchboard': 'https://github.com/switchboard-xyz.png?size=32',
+    'frax': 'https://github.com/FraxFinance.png?size=32',
+    'gitcoin': 'https://github.com/gitcoinco.png?size=32',
+    'curve': 'https://github.com/curvefi.png?size=32',
+    'paxos': 'https://github.com/paxosglobal.png?size=32',
+    'p2p': 'https://github.com/p2p-org.png?size=32',
+    'stablelab': 'https://github.com/StableLab.png?size=32',
+    'superform': 'https://github.com/superform-xyz.png?size=32',
+    'predicate': 'https://github.com/predicatelabs.png?size=32',
+    'omni-network': 'https://github.com/omni-network.png?size=32',
+    'restake': 'https://github.com/restake.png?size=32',
+    'nansen': 'https://github.com/nansen-ai.png?size=32',
+    'bcw': 'https://github.com/bcwgroup.png?size=32',
+    'luganodes': 'https://github.com/Luganodes.png?size=32',
+    'nodes-guru': 'https://github.com/nodesguru.png?size=32',
+    'p-ops-team': 'https://github.com/P-OPSTeam.png?size=32',
+    'zeeve': 'https://github.com/zeeve-inc.png?size=32',
+    'nodit': 'https://github.com/nodit-io.png?size=32',
+};
 // Colour palette for avatar initials — deterministic by provider name
 const AVATAR_COLORS = {
     'LayerZero Labs': '#5865f2',
@@ -74,6 +113,7 @@ function parseDVNsForChain(raw, chainKey) {
             name: meta.canonicalName,
             address,
             color: colorFor(meta.canonicalName),
+            icon: meta.id ? DVN_ICONS[meta.id] : undefined,
         });
     }
     // Sort: known providers first, then alpha

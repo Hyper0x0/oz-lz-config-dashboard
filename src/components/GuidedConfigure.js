@@ -3,10 +3,10 @@ import { useState, useRef, useEffect } from 'react';
 import { TxStatus } from '@/components/TxStatus';
 import { useDVNCatalog } from '@/hooks/useDVNCatalog';
 import { useEndpointConfig } from '@/hooks/useEndpointConfig';
-export function GuidedConfigure({ homeChain, remoteChain, adapterAddr, peerAddr, connectedChainId, isConnected, signer, onSwitchNetwork, wiring, verifyResult, isAdapter = true, isRemoteEvm = true, }) {
+export function GuidedConfigure({ homeChain, remoteChain, adapterAddr, peerAddr, connectedChainId, isConnected, signer, onSwitchNetwork, wiring, verifyResult, isAdapter = true, isRemoteEvm = true, hidePeerStep = false, }) {
     const [openStep, setOpenStep] = useState(1);
     const toggle = (n) => setOpenStep((p) => (p === n ? null : n));
-    return (_jsxs("div", { children: [_jsx(Step1Options, { open: openStep === 1, onToggle: () => toggle(1), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), isAdapter && (_jsx(Step2RateLimit, { open: openStep === 2, onToggle: () => toggle(2), remoteChain: remoteChain, adapterAddr: adapterAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult })), _jsx(Step3Libraries, { open: openStep === 3, onToggle: () => toggle(3), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, signer: signer, onSwitchNetwork: onSwitchNetwork, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), _jsx(Step4DVN, { open: openStep === 4, onToggle: () => toggle(4), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, signer: signer, onSwitchNetwork: onSwitchNetwork, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), _jsx(Step5Peers, { open: openStep === 5, onToggle: () => toggle(5), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm })] }));
+    return (_jsxs("div", { children: [_jsx(Step1Options, { open: openStep === 1, onToggle: () => toggle(1), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), isAdapter && (_jsx(Step2RateLimit, { open: openStep === 2, onToggle: () => toggle(2), remoteChain: remoteChain, adapterAddr: adapterAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult })), _jsx(Step3Libraries, { open: openStep === 3, onToggle: () => toggle(3), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, signer: signer, onSwitchNetwork: onSwitchNetwork, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), _jsx(Step4DVN, { open: openStep === 4, onToggle: () => toggle(4), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, signer: signer, onSwitchNetwork: onSwitchNetwork, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }), !hidePeerStep && (_jsx(Step5Peers, { open: openStep === 5, onToggle: () => toggle(5), homeChain: homeChain, remoteChain: remoteChain, adapterAddr: adapterAddr, peerAddr: peerAddr, connectedChainId: connectedChainId, isConnected: isConnected, onSwitchNetwork: onSwitchNetwork, wiring: wiring, verifyResult: verifyResult, isRemoteEvm: isRemoteEvm }))] }));
 }
 // ── Shared components ─────────────────────────────────────────────────────────
 function StepCard({ n, title, subtitle, statusBadge, open, onToggle, children }) {
@@ -30,6 +30,10 @@ function checkBadge(checks, label) {
 // ── DVN avatar + dropdown picker ─────────────────────────────────────────────
 function DVNAvatar({ provider, size = 20 }) {
     const initials = provider.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    const [imgFailed, setImgFailed] = useState(false);
+    if (provider.icon && !imgFailed) {
+        return (_jsx("img", { src: provider.icon, alt: provider.name, width: size, height: size, onError: () => setImgFailed(true), style: { borderRadius: '50%', flexShrink: 0, objectFit: 'cover' } }));
+    }
     return (_jsx("span", { style: {
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             width: size, height: size, borderRadius: '50%',
@@ -126,6 +130,37 @@ function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAdd
     const [recvLib, setRecvLib] = useState(verifyResult?.remoteReceiveLib ?? (isRemoteEvm ? remoteChain.receiveLib : undefined) ?? '');
     const [sendTx, setSendTx] = useState({ status: 'idle' });
     const [recvTx, setRecvTx] = useState({ status: 'idle' });
+    // Auto-fill DVN selections from verify results when catalog is loaded
+    useEffect(() => {
+        if (!verifyResult?.homeDVN?.requiredDVNs?.length || homeDVNs.length === 0)
+            return;
+        if (selectedHome.size > 0)
+            return; // don't override user selection
+        const pre = new Map();
+        for (const addr of verifyResult.homeDVN.requiredDVNs) {
+            const found = homeDVNs.find((d) => d.address.toLowerCase() === addr.toLowerCase());
+            if (found)
+                pre.set(addr.toLowerCase(), found);
+        }
+        if (pre.size > 0)
+            setSelectedHome(pre);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [verifyResult?.homeDVN?.requiredDVNs?.length, homeDVNs.length]);
+    useEffect(() => {
+        if (!verifyResult?.remoteDVN?.requiredDVNs?.length || remoteDVNs.length === 0)
+            return;
+        if (selectedRemote.size > 0)
+            return;
+        const pre = new Map();
+        for (const addr of verifyResult.remoteDVN.requiredDVNs) {
+            const found = remoteDVNs.find((d) => d.address.toLowerCase() === addr.toLowerCase());
+            if (found)
+                pre.set(addr.toLowerCase(), found);
+        }
+        if (pre.size > 0)
+            setSelectedRemote(pre);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [verifyResult?.remoteDVN?.requiredDVNs?.length, remoteDVNs.length]);
     const sendOk = verifyResult?.checks.find((c) => c.label === 'DVNs configured (send side)')?.passed;
     const recvOk = verifyResult?.checks.find((c) => c.label === 'DVNs configured (receive side)')?.passed;
     const badge = verifyResult

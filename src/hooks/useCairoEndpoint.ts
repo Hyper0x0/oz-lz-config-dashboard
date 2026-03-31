@@ -4,8 +4,8 @@ import type { WalletAccount } from 'starknet';
 import type { TxState } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import { CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN, type UlnConfigParams, type ExecutorConfigParams, encodeUlnConfig, encodeExecutorConfig } from '@/utils/cairoLzConfig';
-import StarknetOFTABI from '@/abis/StarknetOFT.json';
-import StarknetEndpointABI from '@/abis/StarknetEndpoint.json';
+import StarknetOFTABI from '@/abis/svm/OFT.json';
+import StarknetEndpointABI from '@/abis/svm/EndpointV2.json';
 
 const MSG_TYPE_SEND = 1;
 
@@ -41,6 +41,11 @@ export interface CairoEndpointOps {
   setSendLibrary: (endpointAddr: string, oappAddr: string, remoteEid: number, libAddr: string, rpc: string) => Promise<TxState>;
   /** Set the receive library on the Starknet Endpoint for this OApp. grace_period=0 = immediate. */
   setReceiveLibrary: (endpointAddr: string, oappAddr: string, remoteEid: number, libAddr: string, gracePeriod: number, rpc: string) => Promise<TxState>;
+  /**
+   * Set ULN send config + executor config atomically in one set_send_configs call.
+   * The LZ SDK recommends combining these to avoid partial configuration state.
+   */
+  setSendConfigsAtomic: (endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number, uln: UlnConfigParams, executor: ExecutorConfigParams, rpc: string) => Promise<TxState>;
   /** Set ULN send config (DVNs + confirmations) on the Starknet Endpoint. */
   setUlnSendConfig: (endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number, params: UlnConfigParams, rpc: string) => Promise<TxState>;
   /** Set ULN receive config (DVNs + confirmations) on the Starknet Endpoint. */
@@ -90,6 +95,27 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       const response = await account.execute([sendCall, recvCall]);
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
+    } catch (e) {
+      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+    }
+  }, [account]);
+
+  const setSendConfigsAtomic = useCallback(async (
+    endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number,
+    uln: UlnConfigParams, executor: ExecutorConfigParams, rpc: string,
+  ): Promise<TxState> => {
+    if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
+    try {
+      const provider = new RpcProvider({ nodeUrl: rpc });
+      const contract = new Contract(StarknetEndpointABI as never[], endpointAddr, provider);
+      contract.connect(account);
+      // Combine ULN + Executor in one atomic set_send_configs call (LZ SDK recommendation)
+      const tx = await contract.set_send_configs(oappAddr, libAddr, [
+        { eid: remoteEid, config_type: CONFIG_TYPE_ULN,      config: encodeUlnConfig(uln) },
+        { eid: remoteEid, config_type: CONFIG_TYPE_EXECUTOR, config: encodeExecutorConfig(executor) },
+      ]);
+      await account.waitForTransaction(tx.transaction_hash);
+      return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
       return { status: 'error', message: e instanceof Error ? e.message : String(e) };
     }
@@ -259,7 +285,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
 
   return {
     setEnforcedOptions, setLibraries, setSendLibrary, setReceiveLibrary,
-    setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
+    setSendConfigsAtomic, setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
     setDelegate, readSendLibrary, readReceiveLibrary, readDelegate,
   };
 }

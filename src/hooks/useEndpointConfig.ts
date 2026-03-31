@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcSigner, AbiCoder, ContractRunner } from 'ethers';
-import EndpointV2ABI from '@/abis/EndpointV2.json';
+import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
 import type { TxState } from '@/types';
 
 // configType constants (LZ V2 ULN)
@@ -23,6 +23,7 @@ interface IEndpointWrite {
   setSendLibrary(oapp: string, eid: number, newLib: string): Promise<{ wait(): Promise<unknown>; hash: string }>;
   setReceiveLibrary(oapp: string, eid: number, newLib: string, gracePeriod: bigint): Promise<{ wait(): Promise<unknown>; hash: string }>;
   setConfig(oapp: string, lib: string, params: { eid: number; configType: number; config: string }[]): Promise<{ wait(): Promise<unknown>; hash: string }>;
+  setDelegate(oapp: string, delegate: string): Promise<{ wait(): Promise<unknown>; hash: string }>;
 }
 
 function endpointWrite(endpointAddr: string, runner: ContractRunner): IEndpointWrite {
@@ -31,7 +32,7 @@ function endpointWrite(endpointAddr: string, runner: ContractRunner): IEndpointW
 
 /** ABI-encode a ULN config struct for endpoint.setConfig */
 function encodeULN(params: ULNConfigParams): string {
-  const sorted = [...params.requiredDVNs].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const sorted = [...params.requiredDVNs].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
   const optDVNs = params.optionalDVNs ?? [];
   const coder = AbiCoder.defaultAbiCoder();
   return coder.encode(

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { RpcProvider, CallData, Contract } from 'starknet';
-import StarknetOFTABI from '@/abis/StarknetOFT.json';
+import StarknetOFTABI from '@/abis/svm/OFT.json';
 /** Convert an EVM address (0x hex) to the Bytes32 low/high calldata for Cairo set_peer. */
 function evmAddrToBytes32Calldata(evmAddr) {
     const value = BigInt(evmAddr);

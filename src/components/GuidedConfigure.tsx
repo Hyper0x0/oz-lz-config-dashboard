@@ -138,6 +138,19 @@ function checkBadge(checks: PathwayVerifyResult['checks'], label: string): React
 
 function DVNAvatar({ provider, size = 20 }: { provider: DVNProvider; size?: number }): JSX.Element {
   const initials = provider.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const [imgFailed, setImgFailed] = useState(false);
+
+  if (provider.icon && !imgFailed) {
+    return (
+      <img
+        src={provider.icon}
+        alt={provider.name}
+        width={size} height={size}
+        onError={() => setImgFailed(true)}
+        style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }}
+      />
+    );
+  }
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -451,6 +464,31 @@ function Step4DVN({ open, onToggle, homeChain, remoteChain, adapterAddr, peerAdd
   const [recvLib, setRecvLib] = useState(verifyResult?.remoteReceiveLib ?? (isRemoteEvm ? remoteChain.receiveLib : undefined) ?? '');
   const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
   const [recvTx, setRecvTx] = useState<TxState>({ status: 'idle' });
+
+  // Auto-fill DVN selections from verify results when catalog is loaded
+  useEffect(() => {
+    if (!verifyResult?.homeDVN?.requiredDVNs?.length || homeDVNs.length === 0) return;
+    if (selectedHome.size > 0) return; // don't override user selection
+    const pre = new Map<string, DVNProvider>();
+    for (const addr of verifyResult.homeDVN.requiredDVNs) {
+      const found = homeDVNs.find((d) => d.address.toLowerCase() === addr.toLowerCase());
+      if (found) pre.set(addr.toLowerCase(), found);
+    }
+    if (pre.size > 0) setSelectedHome(pre);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifyResult?.homeDVN?.requiredDVNs?.length, homeDVNs.length]);
+
+  useEffect(() => {
+    if (!verifyResult?.remoteDVN?.requiredDVNs?.length || remoteDVNs.length === 0) return;
+    if (selectedRemote.size > 0) return;
+    const pre = new Map<string, DVNProvider>();
+    for (const addr of verifyResult.remoteDVN.requiredDVNs) {
+      const found = remoteDVNs.find((d) => d.address.toLowerCase() === addr.toLowerCase());
+      if (found) pre.set(addr.toLowerCase(), found);
+    }
+    if (pre.size > 0) setSelectedRemote(pre);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifyResult?.remoteDVN?.requiredDVNs?.length, remoteDVNs.length]);
 
   const sendOk = verifyResult?.checks.find((c) => c.label === 'DVNs configured (send side)')?.passed;
   const recvOk = verifyResult?.checks.find((c) => c.label === 'DVNs configured (receive side)')?.passed;

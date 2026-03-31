@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress } from 'ethers';
-import EndpointV2ABI from '@/abis/EndpointV2.json';
-import OFTAdapterABI from '@/abis/OFTAdapter.json';
-import OFTABI from '@/abis/OFT.json';
+import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
+import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
+import OFTABI from '@/abis/evm/OFT.json';
 import type {
   PathwayVerifyResult,
   VerifyCheck,
@@ -48,6 +48,39 @@ function decodeExecutor(raw: string): ExecutorConfig | null {
   } catch {
     return null;
   }
+}
+
+/** Retry fn with fallback RPC when primary fails. */
+async function withFallbackRpc<T>(
+  primary: string,
+  fallback: string | undefined,
+  fn: (rpc: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn(primary);
+  } catch (err) {
+    if (fallback) return fn(fallback);
+    throw err;
+  }
+}
+
+/** Convert a raw ethers / network error into a readable one-liner. */
+function formatVerifyError(err: unknown, chainHint?: string): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const hint = chainHint ? ` (${chainHint})` : '';
+  if (msg.includes('CALL_EXCEPTION') || msg.includes('missing revert data')) {
+    return `Endpoint contract call failed${hint} — the metadata API may have returned an incorrect endpoint address. Reads continue with partial data.`;
+  }
+  if (
+    msg.includes('NETWORK_ERROR') ||
+    msg.includes('failed to fetch') ||
+    msg.toLowerCase().includes('timeout') ||
+    msg.includes('ERR_NAME_NOT_RESOLVED')
+  ) {
+    return `RPC connection failed${hint} — the public endpoint is unavailable. Configure a private RPC in .env.local.`;
+  }
+  // Trim verbose ethers stack traces
+  return msg.length > 300 ? msg.slice(0, 300) + '…' : msg;
 }
 
 function buildChecks(r: Omit<PathwayVerifyResult, 'checks' | 'error'>): VerifyCheck[] {
@@ -225,83 +258,100 @@ export interface VerifyParams {
 
 export function useLZVerify() {
   const verify = useCallback(async (p: VerifyParams): Promise<PathwayVerifyResult> => {
-    const homeProvider = p.walletProvider ?? new JsonRpcProvider(p.homeChain.rpc);
-    const remoteProvider = new JsonRpcProvider(p.remoteChain.rpc);
-    const homeEp = endpointContract(p.homeChain.endpoint, homeProvider);
-    const remoteEp = endpointContract(p.remoteChain.endpoint, remoteProvider);
-    const adapter = new Contract(p.adapterAddr, OFTAdapterABI, homeProvider) as unknown as IOFTAdapter;
-    const peer = new Contract(p.peerAddr, OFTABI, remoteProvider) as unknown as IOFTPeer;
-
     let error: string | null = null;
     const partial: Partial<Omit<PathwayVerifyResult, 'checks' | 'error'>> = {};
 
+    // ── EID support check — each chain independently ────────────────────────
     try {
-      // ── EID support check ──────────────────────────────────────────────────
-      const [remoteEidSupported, homeEidSupported] = await Promise.all([
-        homeEp.isSupportedEid(p.remoteChain.eid),
-        remoteEp.isSupportedEid(p.homeChain.eid),
-      ]);
-      partial.remoteEidSupported = remoteEidSupported;
-      partial.homeEidSupported = homeEidSupported;
-
-      // ── Home side reads ────────────────────────────────────────────────────
-      const [sendLib, delegate, homePeer, homeOpts] = await Promise.all([
-        homeEp.getSendLibrary(p.adapterAddr, p.remoteChain.eid),
-        homeEp.delegates(p.adapterAddr),
-        adapter.peers(p.remoteChain.eid),
-        adapter.enforcedOptions(p.remoteChain.eid, SEND_MSG_TYPE),
-      ]);
-
-      partial.homeSendLib = sendLib;
-      partial.homeDelegate = delegate;
-      partial.homePeer = homePeer;
-      partial.homeEnforcedOptions = homeOpts;
-
-      if (sendLib && sendLib !== ZeroAddress) {
-        const [execRaw, ulnRaw] = await Promise.all([
-          homeEp.getConfig(p.adapterAddr, sendLib, p.remoteChain.eid, CONFIG_TYPE_EXECUTOR),
-          homeEp.getConfig(p.adapterAddr, sendLib, p.remoteChain.eid, CONFIG_TYPE_ULN),
-        ]);
-        partial.homeExecutor = decodeExecutor(execRaw);
-        partial.homeDVN = decodeUln(ulnRaw);
-      }
-
-      // Rate limit (adapter only — may not exist on peer)
-      try {
-        const rl = await adapter.rateLimits(p.remoteChain.eid);
-        partial.homeRateLimit = { limit: rl[2], window: Number(rl[3]) };
-      } catch {
-        partial.homeRateLimit = null;
-      }
-
-      // ── Remote side reads ──────────────────────────────────────────────────
-      const [recvLibResult, remotePeer, remoteOpts] = await Promise.all([
-        remoteEp.getReceiveLibrary(p.peerAddr, p.homeChain.eid),
-        peer.peers(p.homeChain.eid),
-        peer.enforcedOptions(p.homeChain.eid, SEND_MSG_TYPE),
-      ]);
-
-      const [recvLib, recvLibIsDefault] = recvLibResult;
-      partial.remoteReceiveLib = recvLib;
-      partial.remoteReceiveLibIsDefault = recvLibIsDefault;
-      partial.remotePeer = remotePeer;
-      partial.remoteEnforcedOptions = remoteOpts;
-
-      if (recvLib && recvLib !== ZeroAddress) {
-        const dvnRaw = await remoteEp.getConfig(
-          p.peerAddr,
-          recvLib,
-          p.homeChain.eid,
-          CONFIG_TYPE_ULN,
-        );
-        partial.remoteDVN = decodeUln(dvnRaw);
-      }
+      await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
+        const provider = p.walletProvider ?? new JsonRpcProvider(rpc);
+        const homeEp = endpointContract(p.homeChain.endpoint, provider);
+        partial.remoteEidSupported = await homeEp.isSupportedEid(p.remoteChain.eid);
+      });
     } catch (err) {
-      error = String(err instanceof Error ? err.message : err);
+      partial.remoteEidSupported = false;
+      if (!error) error = formatVerifyError(err, p.homeChain.name);
+    }
+
+    try {
+      await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
+        const remoteEp = endpointContract(p.remoteChain.endpoint, new JsonRpcProvider(rpc));
+        partial.homeEidSupported = await remoteEp.isSupportedEid(p.homeChain.eid);
+      });
+    } catch (err) {
+      partial.homeEidSupported = false;
+      if (!error) error = formatVerifyError(err, p.remoteChain.name);
+    }
+
+    // ── Home side reads ─────────────────────────────────────────────────────
+    try {
+      await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
+        const provider = p.walletProvider ?? new JsonRpcProvider(rpc);
+        const homeEp = endpointContract(p.homeChain.endpoint, provider);
+        const adapter = new Contract(p.adapterAddr, OFTAdapterABI, provider) as unknown as IOFTAdapter;
+
+        const [sendLib, delegate, homePeer, homeOpts] = await Promise.all([
+          homeEp.getSendLibrary(p.adapterAddr, p.remoteChain.eid),
+          homeEp.delegates(p.adapterAddr),
+          adapter.peers(p.remoteChain.eid),
+          adapter.enforcedOptions(p.remoteChain.eid, SEND_MSG_TYPE),
+        ]);
+
+        partial.homeSendLib = sendLib;
+        partial.homeDelegate = delegate;
+        partial.homePeer = homePeer;
+        partial.homeEnforcedOptions = homeOpts;
+
+        if (sendLib && sendLib !== ZeroAddress) {
+          const [execRaw, ulnRaw] = await Promise.all([
+            homeEp.getConfig(p.adapterAddr, sendLib, p.remoteChain.eid, CONFIG_TYPE_EXECUTOR),
+            homeEp.getConfig(p.adapterAddr, sendLib, p.remoteChain.eid, CONFIG_TYPE_ULN),
+          ]);
+          partial.homeExecutor = decodeExecutor(execRaw);
+          partial.homeDVN = decodeUln(ulnRaw);
+        }
+
+        try {
+          const rl = await adapter.rateLimits(p.remoteChain.eid);
+          partial.homeRateLimit = { limit: rl[2], window: Number(rl[3]) };
+        } catch {
+          partial.homeRateLimit = null;
+        }
+      });
+    } catch (err) {
+      if (!error) error = formatVerifyError(err, p.homeChain.name);
+    }
+
+    // ── Remote side reads ───────────────────────────────────────────────────
+    try {
+      await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
+        const provider = new JsonRpcProvider(rpc);
+        const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
+        const peer = new Contract(p.peerAddr, OFTABI, provider) as unknown as IOFTPeer;
+
+        const [recvLibResult, remotePeer, remoteOpts] = await Promise.all([
+          remoteEp.getReceiveLibrary(p.peerAddr, p.homeChain.eid),
+          peer.peers(p.homeChain.eid),
+          peer.enforcedOptions(p.homeChain.eid, SEND_MSG_TYPE),
+        ]);
+
+        const [recvLib, recvLibIsDefault] = recvLibResult;
+        partial.remoteReceiveLib = recvLib;
+        partial.remoteReceiveLibIsDefault = recvLibIsDefault;
+        partial.remotePeer = remotePeer;
+        partial.remoteEnforcedOptions = remoteOpts;
+
+        if (recvLib && recvLib !== ZeroAddress) {
+          const dvnRaw = await remoteEp.getConfig(p.peerAddr, recvLib, p.homeChain.eid, CONFIG_TYPE_ULN);
+          partial.remoteDVN = decodeUln(dvnRaw);
+        }
+      });
+    } catch (err) {
+      if (!error) error = formatVerifyError(err, p.remoteChain.name);
     }
 
     const full = partial as Omit<PathwayVerifyResult, 'checks' | 'error'>;
-    const checks = error ? [] : buildChecks(full);
+    const checks = buildChecks(full);
 
     return { ...full, checks, error };
   }, []);

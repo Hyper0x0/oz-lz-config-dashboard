@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { useEvmWallet } from '@/hooks/useEvmWallet';
-import { useStarknetWallet } from '@/hooks/useStarknetWallet';
+import { useWallet } from '@/context/WalletContext';
 import { useOFTWiring } from '@/hooks/useOFTWiring';
 import { useLZVerify } from '@/hooks/useLZVerify';
 import { useLZChains } from '@/hooks/useLZChains';
 import { useCairoOFT } from '@/hooks/useCairoOFT';
 import { useCairoEndpoint } from '@/hooks/useCairoEndpoint';
 import { useDVNCatalog } from '@/hooks/useDVNCatalog';
-import { EvmWalletButton } from '@/components/EvmWalletButton';
-import { StarknetWalletButton } from '@/components/StarknetWalletButton';
+import { useEvmWallet } from '@/hooks/useEvmWallet';
+import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { TxStatus } from '@/components/TxStatus';
 import { GuidedConfigure } from '@/components/GuidedConfigure';
 import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
@@ -28,12 +27,20 @@ function addrToBytes32(addr: string): string { return '0x' + BigInt(addr).toStri
 function toAnyEvm(c: LZChain): AnyChain { return { ...c, kind: 'evm' }; }
 function starkChain(testnet: boolean): StarknetChain {
   const base = testnet ? STARKNET_TESTNET : STARKNET_MAINNET;
+  // Apply RPC override from settings (stored in localStorage)
+  try {
+    const stored = localStorage.getItem('ozlz_rpc_overrides');
+    if (stored) {
+      const overrides = JSON.parse(stored) as { starknetMainnet?: string; starknetSepolia?: string };
+      const override = testnet ? overrides.starknetSepolia : overrides.starknetMainnet;
+      if (override?.trim()) return { kind: 'starknet', isTestnet: testnet, ...base, rpc: override.trim() };
+    }
+  } catch { /* ignore */ }
   return { kind: 'starknet', isTestnet: testnet, ...base };
 }
 
 export function OFTWiring(): JSX.Element {
-  const evm = useEvmWallet();
-  const stark = useStarknetWallet();
+  const { evm, stark } = useWallet();
   const { chains: evmChains, loading: chainsLoading, isTestnet, setIsTestnet } = useLZChains(true);
   const wiring = useOFTWiring(evm.signer);
   const { verify, readEvmSideForStarknet } = useLZVerify();
@@ -159,165 +166,272 @@ export function OFTWiring(): JSX.Element {
     setVerifying(false);
   }
 
+  // Auto-run EVM verify (debounced) when addresses or chains change
+  const autoVerifyTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!bothEvm || !isAddr(homeAddr) || !isAddr(remoteAddr)) return;
+    clearTimeout(autoVerifyTimer.current);
+    autoVerifyTimer.current = setTimeout(() => { void handleVerify(); }, 1500);
+    return () => clearTimeout(autoVerifyTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeAddr, remoteAddr, home.eid, remote.eid, bothEvm]);
+
   return (
-    <div>
-      {/* Topbar — both wallet buttons together */}
-      <div className="topbar">
-        <h2>OFT Wiring</h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <EvmWalletButton
-            address={evm.address}
-            chainId={evm.chainId}
-            chainName={evmHome?.name ?? ''}
-            onConnect={evm.connect}
-            onSwitchNetwork={evmHome ? () => evm.switchNetwork(evmHome.chainId) : undefined}
-            targetChainId={evmHome?.chainId ?? 0}
-          />
-          {hasStarknet && (
-            <StarknetWalletButton
-              address={stark.address}
-              onConnect={stark.connect}
-              onDisconnect={stark.disconnect}
-            />
-          )}
-        </div>
-      </div>
+    <div className="grid grid-cols-12 gap-6">
 
-      {/* Page body: main content left, peers sidebar right */}
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* ── Left: main content ── */}
+      <div className="col-span-12 lg:col-span-8 space-y-6">
 
-      {/* Chain + contract picker */}
-      <section className="card">
-
-        {/* Network toggle + wiring mode */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-          <button className={`btn${isTestnet ? '' : ' btn-ghost'}`} onClick={() => handleNetworkToggle(true)}>Testnet</button>
-          <button className={`btn${!isTestnet ? '' : ' btn-ghost'}`} onClick={() => handleNetworkToggle(false)}>Mainnet</button>
-          {chainsLoading && <span style={{ fontSize: 12, color: '#888' }}>Loading chains…</span>}
-          {!chainsLoading && <span style={{ fontSize: 12, color: '#555' }}>{evmChains.length} EVM + 1 Starknet</span>}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: '#555' }}>Wire:</span>
-            <button className={`btn${mode === 'bridge-oft' ? '' : ' btn-ghost'}`} onClick={() => setMode('bridge-oft')}>Adapter ↔ OFT</button>
-            <button className={`btn${mode === 'oft-oft' ? '' : ' btn-ghost'}`} onClick={() => setMode('oft-oft')}>OFT ↔ OFT</button>
+        {/* Pathway Configuration */}
+        <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <span className="material-symbols-outlined text-primary text-lg">route</span>
+            </div>
+            <div>
+              <h3 className="font-headline text-base font-bold text-on-surface">Pathway Configuration</h3>
+              <p className="text-[11px] text-on-surface-variant">Select chains and contract addresses</p>
+            </div>
           </div>
-        </div>
 
-        {/* Chain selectors */}
-        <div className="form-grid">
-          <div>
-            <div className="label">{homeLabel} chain (home) — EID {home.eid}</div>
-            <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
-              onSelect={(c) => { setHomeChain(c); clearData(); setTab('verify'); }} />
-          </div>
-          <div>
-            <div className="label">OFT chain (remote) — EID {remote.eid}</div>
-            <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
-              onSelect={(c) => { setRemoteChain(c); clearData(); setTab('verify'); }} />
-          </div>
-        </div>
-
-        {/* Address inputs */}
-        <div className="form-grid" style={{ marginTop: 8 }}>
-          <Field label={`${homeLabel} address (home)`} value={homeAddr} onChange={setHomeAddr} />
-          <Field label="OFT address (remote)" value={remoteAddr} onChange={setRemoteAddr} />
-        </div>
-
-        {/* Fetch + wallet hints */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
-          {(bothEvm || hasStarknet) && (
+          {/* Network toggle + wiring mode */}
+          <div className="flex gap-2 items-center mb-5 flex-wrap">
             <button
-              className="btn btn-primary"
-              onClick={handleFetch}
-              disabled={fetching || !homeAddr || !remoteAddr}
-            >
-              {fetching ? 'Fetching…' : 'Fetch data'}
-            </button>
-          )}
-          {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
-            <span style={{ fontSize: 12, color: '#6bcb77' }}>✓ EVM wallet on {evmHome.name}</span>
-          )}
-          {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
-            <span style={{ fontSize: 12, color: '#888' }}>Using public RPC — switch wallet to {evmHome.name} to configure</span>
-          )}
-          {hasStarknet && stark.isConnected && (
-            <span style={{ fontSize: 12, color: '#6bcb77' }}>✓ Starknet wallet connected</span>
-          )}
-          {hasStarknet && !stark.isConnected && (
-            <span style={{ fontSize: 12, color: '#888' }}>Connect Starknet wallet to configure</span>
-          )}
-        </div>
-
-        {/* Token banner (EVM-EVM only) */}
-        {tokenInfo && (
-          <div className="token-banner">
-            <TokenBadge label={`${homeLabel} locks`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
-            <span style={{ color: '#444', fontSize: 18 }}>↔</span>
-            <TokenBadge label="OFT mints" name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
+              className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${isTestnet ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+              onClick={() => handleNetworkToggle(true)}>Testnet</button>
+            <button
+              className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${!isTestnet ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+            {chainsLoading && <span className="text-xs text-on-surface-variant">Loading chains…</span>}
+            {!chainsLoading && <span className="text-xs text-on-surface-variant">{evmChains.length} EVM + 1 Starknet</span>}
+            <div className="ml-auto flex gap-2 items-center">
+              <span className="text-xs text-on-surface-variant">Wire:</span>
+              <button
+                className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'bridge-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                onClick={() => setMode('bridge-oft')}>Adapter ↔ OFT</button>
+              <button
+                className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'oft-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                onClick={() => setMode('oft-oft')}>OFT ↔ OFT</button>
+            </div>
           </div>
-        )}
-        {tokenInfoError && (
-          <div style={{ fontSize: 12, color: '#ff6b6b', marginTop: 8 }}>{tokenInfoError}</div>
-        )}
-      </section>
 
-      {/* Verify + Configure tabs — shown for all chain combinations */}
-      {(bothEvm || hasStarknet) && (
-        <>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button className={`btn${tab === 'verify' ? '' : ' btn-ghost'}`} onClick={() => setTab('verify')}>Verify</button>
-            <button className={`btn${tab === 'configure' ? '' : ' btn-ghost'}`} onClick={() => setTab('configure')}>Configure</button>
+          {/* Chain selectors */}
+          <div className="form-grid">
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} chain (home) — EID {home.eid}</div>
+              <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
+                onSelect={(c) => { setHomeChain(c); clearData(); setTab('verify'); }} />
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">OFT chain (remote) — EID {remote.eid}</div>
+              <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
+                onSelect={(c) => { setRemoteChain(c); clearData(); setTab('verify'); }} />
+            </div>
           </div>
-          {tab === 'verify' && bothEvm && evmHome && evmRemote && (
-            <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
+
+          {/* Address inputs */}
+          <div className="form-grid mt-3">
+            <Field label={`${homeLabel} address (home)`} value={homeAddr} onChange={setHomeAddr} />
+            <Field label="OFT address (remote)" value={remoteAddr} onChange={setRemoteAddr} />
+          </div>
+
+          {/* Fetch + wallet hints */}
+          <div className="flex items-center gap-3 mt-3 flex-wrap">
+            {(bothEvm || hasStarknet) && (
+              <button
+                className="btn btn-primary"
+                onClick={handleFetch}
+                disabled={fetching || !homeAddr || !remoteAddr}
+              >
+                {fetching ? 'Fetching…' : 'Fetch data'}
+              </button>
+            )}
+            {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
+              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>EVM wallet on {evmHome.name}</span>
+            )}
+            {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
+              <span className="text-xs text-on-surface-variant">Using public RPC — switch wallet to {evmHome.name} to configure</span>
+            )}
+            {hasStarknet && stark.isConnected && (
+              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Starknet wallet connected</span>
+            )}
+            {hasStarknet && !stark.isConnected && (
+              <span className="text-xs text-on-surface-variant">Connect Starknet wallet to configure</span>
+            )}
+          </div>
+
+          {/* Token banner (EVM-EVM only) */}
+          {tokenInfo && (
+            <div className="token-banner">
+              <TokenBadge label={`${homeLabel} locks`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
+              <span style={{ color: '#444', fontSize: 18 }}>↔</span>
+              <TokenBadge label="OFT mints" name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
+            </div>
           )}
-          {tab === 'verify' && hasStarknet && (
-            <StarknetVerifyPanel
-              home={home} remote={remote}
-              homeAddr={homeAddr} remoteAddr={remoteAddr}
-              cairo={cairo} cairoEndpoint={cairoEndpoint}
-              readEvmSide={readEvmSideForStarknet}
-              fetchTick={starkFetchTick}
-            />
+          {tokenInfoError && (
+            <div className="text-xs text-error mt-3">{tokenInfoError}</div>
           )}
-          {tab === 'configure' && bothEvm && evmHome && evmRemote && (
-            <EvmEvmConfigurePanel
-              homeChain={evmHome} remoteChain={evmRemote}
-              homeAddr={homeAddr} remoteAddr={remoteAddr}
-              mode={mode} evm={evm} wiring={wiring} verifyResult={verifyResult}
-            />
-          )}
-          {tab === 'configure' && hasStarknet && (
-            <StarknetConfigurePanel
-              home={home} remote={remote}
-              homeAddr={homeAddr} remoteAddr={remoteAddr}
-              wiringMode={mode}
-              stark={stark} cairo={cairo} cairoEndpoint={cairoEndpoint} wiring={wiring}
-              evm={evm} verifyResult={verifyResult}
-            />
-          )}
-        </>
-      )}
+        </section>
+
+        {/* Verify + Configure tabs — shown for all chain combinations */}
+        {(bothEvm || hasStarknet) && (
+          <>
+            <div className="flex gap-2 mb-1">
+              <button
+                className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${tab === 'verify' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                onClick={() => setTab('verify')}>Verify</button>
+              <button
+                className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${tab === 'configure' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+                onClick={() => setTab('configure')}>Configure</button>
+            </div>
+            {tab === 'verify' && bothEvm && evmHome && evmRemote && (
+              <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
+            )}
+            {tab === 'verify' && hasStarknet && (
+              <StarknetVerifyPanel
+                home={home} remote={remote}
+                homeAddr={homeAddr} remoteAddr={remoteAddr}
+                cairo={cairo} cairoEndpoint={cairoEndpoint}
+                readEvmSide={readEvmSideForStarknet}
+                fetchTick={starkFetchTick}
+              />
+            )}
+            {tab === 'configure' && bothEvm && evmHome && evmRemote && (
+              <EvmEvmConfigurePanel
+                homeChain={evmHome} remoteChain={evmRemote}
+                homeAddr={homeAddr} remoteAddr={remoteAddr}
+                mode={mode} evm={evm} wiring={wiring} verifyResult={verifyResult}
+              />
+            )}
+            {tab === 'configure' && hasStarknet && (
+              <StarknetConfigurePanel
+                home={home} remote={remote}
+                homeAddr={homeAddr} remoteAddr={remoteAddr}
+                wiringMode={mode}
+                stark={stark} cairo={cairo} cairoEndpoint={cairoEndpoint} wiring={wiring}
+                evm={evm} verifyResult={verifyResult}
+              />
+            )}
+          </>
+        )}
       </div>{/* end left column */}
 
       {/* Right sidebar: Connected Peers */}
-      <div style={{ width: 300, flexShrink: 0, position: 'sticky', top: 16 }}>
-        <PeersSidebar
-          peers={peers}
-          scanning={peersScanning}
-          error={peersError}
-          canScan={canScanPeers}
-          bridgeAddr={homeAddr}
-          bridgeLabel={isStarknet(home) ? 'Cairo OFT' : homeLabel}
-          chainName={home.name}
-          isTestnet={isTestnet}
-          onScan={handleScanPeers}
-        />
+      <div className="col-span-12 lg:col-span-4">
+        <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 sticky top-6">
+          <PeersSidebar
+            peers={peers}
+            scanning={peersScanning}
+            error={peersError}
+            canScan={canScanPeers}
+            bridgeAddr={homeAddr}
+            bridgeLabel={isStarknet(home) ? 'Cairo OFT' : homeLabel}
+            chainName={home.name}
+            isTestnet={isTestnet}
+            onScan={handleScanPeers}
+          />
+        </div>
       </div>
 
-      </div>{/* end flex row */}
     </div>
   );
+}
+
+// ── DVN icon with initials fallback ──────────────────────────────────────────
+
+function DVNIcon({ provider, size = 22 }: { provider: DVNProvider; size?: number }): JSX.Element {
+  const initials = provider.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const [failed, setFailed] = useState(false);
+  if (provider.icon && !failed) {
+    return (
+      <img src={provider.icon} alt={provider.name} width={size} height={size}
+        onError={() => setFailed(true)}
+        style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }} />
+    );
+  }
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      width: size, height: size, borderRadius: '50%',
+      background: provider.color + '33', border: `1px solid ${provider.color}`,
+      color: provider.color, fontSize: size * 0.4, fontWeight: 700, flexShrink: 0,
+    }}>{initials}</span>
+  );
+}
+
+// ── Chain icon helpers ────────────────────────────────────────────────────────
+
+/**
+ * Return a DeFiLlama chain icon URL for a given chainKey.
+ * Strips testnet suffixes and normalises to DeFiLlama naming.
+ */
+function chainIconUrl(chainKey: string): string {
+  const base = chainKey
+    .replace(/-sepolia$/i, '')
+    .replace(/-testnet$/i, '')
+    .replace(/-goerli$/i, '')
+    .replace(/-fuji$/i, '')
+    .replace(/-mumbai$/i, '')
+    .replace(/-nova$/i, '-nova')  // keep arbitrum-nova as-is
+    .toLowerCase();
+  // Map LZ chainKeys to DeFiLlama chain slugs where they differ
+  const overrides: Record<string, string> = {
+    'ethereum':   'ethereum',
+    'bsc':        'bsc',
+    'avalanche':  'avax',
+    'polygon':    'polygon',
+    'fantom':     'fantom',
+    'gnosis':     'xdai',
+    'cronos':     'cronos',
+    'celo':       'celo',
+    'moonbeam':   'moonbeam',
+    'moonriver':  'moonriver',
+    'harmony':    'harmony',
+    'kava':       'kava',
+    'aurora':     'aurora',
+    'telos':      'telos',
+    'zksync':     'era',
+    'polygon-zkevm': 'polygon%20zkevm',
+  };
+  return `https://icons.llamao.fi/icons/chains/rsz_${overrides[base] ?? base}.jpg`;
+}
+
+function ChainIconFallback({ size }: { size: number }): JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" fill="none" style={{ flexShrink: 0 }}
+      xmlns="http://www.w3.org/2000/svg">
+      <rect width="18" height="18" rx="9" fill="#1e1e2e" />
+      {/* cube / block icon — hexagon outer + 3 lines from center to alternating vertices */}
+      <path d="M9 3.5 L14 6.5 L14 11.5 L9 14.5 L4 11.5 L4 6.5 Z" stroke="#6c6c8a" strokeWidth="1" fill="none" />
+      <path d="M9 9 L9 3.5 M9 9 L14 11.5 M9 9 L4 11.5" stroke="#6c6c8a" strokeWidth="1" fill="none" />
+    </svg>
+  );
+}
+
+function ChainIcon({ chainKey, size = 18 }: { chainKey: string; size?: number }): JSX.Element {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <ChainIconFallback size={size} />;
+  return (
+    <img src={chainIconUrl(chainKey)} alt="" width={size} height={size}
+      onError={() => setFailed(true)}
+      style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }} />
+  );
+}
+
+// ── Chain category helpers ────────────────────────────────────────────────────
+
+function chainCategory(c: LZChain): 'L1' | 'L2' {
+  const n = c.name.toLowerCase();
+  const k = c.chainKey.toLowerCase();
+  if (
+    n.includes('arbitrum') || n.includes('optimism') || n.includes('base') ||
+    n.includes('zksync') || n.includes('linea') || n.includes('scroll') ||
+    n.includes('blast') || n.includes('mode') || n.includes('mantle') ||
+    n.includes('taiko') || n.includes('polygon zk') || n.includes('manta') ||
+    n.includes('zircuit') || n.includes('kroma') || n.includes('mint') ||
+    k.includes('op-') || k.includes('arb') || k.includes('zk') || k.includes('l2')
+  ) return 'L2';
+  return 'L1';
 }
 
 // ── Unified chain select (EVM + Starknet) ────────────────────────────────────
@@ -355,18 +469,25 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect }: {
   );
 
   const isSelectedStark = isStarknet(selected);
+  const selectedChainKey = isSelectedStark ? '' : (selected as LZChain).chainKey;
   const displayName = `${selected.name} — EID ${selected.eid}`;
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         className="input"
-        style={{ textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          ...(isSelectedStark ? { borderColor: '#3a2010', color: '#ff7e33' } : {}) }}
+        style={{ textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between',
+          ...(isSelectedStark ? { borderColor: '#2a2a5a', color: '#919bff' } : {}) }}
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
-        <span>{displayName}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {isSelectedStark
+            ? <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#919bff22', border: '1px solid #919bff55', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#919bff', fontWeight: 700 }}>SN</span>
+            : <ChainIcon chainKey={selectedChainKey} size={18} />
+          }
+          {displayName}
+        </span>
         <span style={{ color: '#555', fontSize: 11, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
       </button>
 
@@ -375,11 +496,12 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect }: {
           {/* Starknet option pinned at top */}
           <div
             className={`chain-option${isSelectedStark ? ' chain-option-active' : ''}`}
-            style={{ borderBottom: '1px solid #2a2a2a', color: isSelectedStark ? '#ff7e33' : '#ff7e33aa' }}
+            style={{ borderBottom: '1px solid #2a2a2a', color: isSelectedStark ? '#919bff' : '#919bff88', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={() => { onSelect(stark); setOpen(false); }}
           >
+            <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#919bff22', border: '1px solid #919bff55', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#919bff', fontWeight: 700 }}>SN</span>
             <span>{stark.name}</span>
-            <span style={{ fontSize: 11 }}>EID {stark.eid}</span>
+            <span style={{ fontSize: 11, marginLeft: 'auto' }}>EID {stark.eid}</span>
           </div>
 
           {/* Search + EVM list */}
@@ -393,20 +515,31 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect }: {
               style={{ padding: '5px 8px' }}
             />
           </div>
-          <div style={{ overflowY: 'auto', maxHeight: 220 }}>
+          <div style={{ overflowY: 'auto', maxHeight: 260 }}>
             {filteredEvm.length === 0 && (
               <div style={{ padding: '10px 12px', color: '#555', fontSize: 13 }}>No chains match</div>
             )}
-            {filteredEvm.map((c) => (
-              <div
-                key={c.eid}
-                className={`chain-option${!isSelectedStark && (selected as LZChain).eid === c.eid ? ' chain-option-active' : ''}`}
-                onClick={() => { onSelect(toAnyEvm(c)); setOpen(false); }}
-              >
-                <span>{c.name}</span>
-                <span style={{ color: '#555', fontSize: 11 }}>EID {c.eid}</span>
-              </div>
-            ))}
+            {(['L1', 'L2'] as const).map((cat) => {
+              const group = filteredEvm.filter((c) => chainCategory(c) === cat);
+              if (group.length === 0) return null;
+              return (
+                <div key={cat}>
+                  <div style={{ padding: '5px 12px 2px', fontSize: 9, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#444' }}>{cat}</div>
+                  {group.map((c) => (
+                    <div
+                      key={c.eid}
+                      className={`chain-option${!isSelectedStark && (selected as LZChain).eid === c.eid ? ' chain-option-active' : ''}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                      onClick={() => { onSelect(toAnyEvm(c)); setOpen(false); }}
+                    >
+                      <ChainIcon chainKey={c.chainKey} size={18} />
+                      <span>{c.name}</span>
+                      <span style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>EID {c.eid}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -434,9 +567,9 @@ function CheckRow({ label, passed, detail, severity = 'critical' }: {
   return (
     <div className={`check-row ${cls}`}>
       <span className="check-icon">{passed ? '✓' : '✗'}</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600 }}>{label}</div>
-        {detail && <div style={{ fontSize: 12, opacity: 0.8, wordBreak: 'break-all' }}>{detail}</div>}
+      <div className="flex-1">
+        <div className="font-semibold">{label}</div>
+        {detail && <div className="text-xs opacity-80 break-all">{detail}</div>}
       </div>
     </div>
   );
@@ -464,6 +597,16 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
     if (fetchTick && fetchTick > 0) runChecks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchTick]);
+
+  // Auto-run checks (debounced) when addresses or chain EIDs change
+  const autoCheckTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (!isAddr(cairoAddr) || !isAddr(evmAddr)) return;
+    clearTimeout(autoCheckTimer.current);
+    autoCheckTimer.current = setTimeout(() => { void runChecks(); }, 1500);
+    return () => clearTimeout(autoCheckTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cairoAddr, evmAddr, home.eid, remote.eid]);
 
   async function runChecks(): Promise<void> {
     if (!isAddr(cairoAddr) || !isAddr(evmAddr)) return;
@@ -506,11 +649,11 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
   const done = !checking && (evmState !== null || starkState !== null);
 
   return (
-    <section className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
+      <div className="flex justify-between items-center mb-4">
         <div>
-          <h3 style={{ margin: 0 }}>Pathway verification</h3>
-          <span style={{ color: '#888', fontSize: 13 }}>
+          <h3 className="font-headline text-base font-bold text-on-surface m-0">Pathway verification</h3>
+          <span className="text-xs text-on-surface-variant">
             {home.name} (EID {home.eid}) ↔ {remote.name} (EID {remote.eid})
           </span>
         </div>
@@ -520,7 +663,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
       </div>
 
       {!done && !checking && (
-        <p style={{ color: '#666', fontSize: 13 }}>
+        <p className="text-xs text-on-surface-variant">
           Enter both contract addresses above, then press <strong>Run checks</strong> to read on-chain state from both endpoints. No wallet required.
         </p>
       )}
@@ -529,7 +672,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
       {/* ── EVM side ── */}
       {evmState && (
         <>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 4px' }}>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant mt-3 mb-1">
             {evmChainData.name} (send → Starknet)
           </div>
           <CheckRow label="Send library set" passed={!!evmState.sendLib && evmState.sendLib !== '0x0000000000000000000000000000000000000000'} detail={evmState.sendLib ?? 'Not set'} />
@@ -540,7 +683,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           <CheckRow label="Peer set (EVM → Starknet)"
             passed={!!evmState.peer && evmState.peer !== ZERO64 && expectedEvmPeer !== null && evmState.peer.toLowerCase() === expectedEvmPeer.toLowerCase()}
             detail={evmState.peer && evmState.peer !== ZERO64 ? evmState.peer : 'Not set'} />
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 4px' }}>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant mt-3 mb-1">
             {evmChainData.name} (receive ← Starknet)
           </div>
           <CheckRow label="Receive library set" passed={!!evmState.recvLib && evmState.recvLib !== '0x0000000000000000000000000000000000000000' && !evmState.recvLibIsDefault}
@@ -553,7 +696,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
       {/* ── Starknet side ── */}
       {starkState && (
         <>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#ff7e33', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 4px' }}>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-tertiary mt-3 mb-1">
             {starkChainData.name} (send → EVM)
           </div>
           <CheckRow label="Send library set" passed={!!starkState.sendLib} detail={starkState.sendLib ?? 'Not set'} />
@@ -562,7 +705,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           <CheckRow label="Peer set (Starknet → EVM)"
             passed={!!starkState.peer && starkState.peer !== ZERO64 && expectedCairoPeer !== null && starkState.peer.toLowerCase() === expectedCairoPeer.toLowerCase()}
             detail={starkState.peer && starkState.peer !== ZERO64 ? starkState.peer : 'Not set'} />
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#ff7e33', textTransform: 'uppercase', letterSpacing: 1, margin: '12px 0 4px' }}>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-tertiary mt-3 mb-1">
             {starkChainData.name} (receive ← EVM)
           </div>
           <CheckRow label="Receive library set" passed={!!starkState.recvLib && !starkState.recvLibIsDefault}
@@ -580,12 +723,12 @@ function ChainColumnHeader({ label, chainName, eid, connected }: {
   label: string; chainName: string; eid: number; connected: boolean;
 }): JSX.Element {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingLeft: 4 }}>
-      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#555' }}>{label}</span>
-      <span style={{ fontSize: 12, color: '#888' }}>{chainName} — EID {eid}</span>
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant">{label}</span>
+      <span className="text-xs text-on-surface-variant">{chainName} — EID {eid}</span>
       {connected
-        ? <span style={{ fontSize: 11, color: '#6bcb77', marginLeft: 'auto' }}>✓ connected</span>
-        : <span style={{ fontSize: 11, color: '#666', marginLeft: 'auto' }}>wallet needed</span>}
+        ? <span className="text-xs text-secondary ml-auto flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>connected</span>
+        : <span className="text-xs text-outline-variant ml-auto">wallet needed</span>}
     </div>
   );
 }
@@ -613,24 +756,24 @@ function PeerConnectSection({ left, right, evm }: {
   const [rightTx, setRightTx] = useState<TxState>({ status: 'idle' });
 
   return (
-    <div className="card" style={{ marginTop: 16, borderColor: confirmed ? '#2a3a2a' : '#2a2a2a' }}>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Connect Peers</div>
+    <div className={`bg-surface-container-low rounded-xl border p-6 mt-4 ${confirmed ? 'border-secondary/20' : 'border-outline-variant/10'}`}>
+      <div className="mb-4">
+        <div className="font-headline text-sm font-bold text-on-surface mb-2">Connect Peers</div>
         <div className="step-warn-banner">
           ⚠ Setting peers opens the messaging channel. Tokens can flow immediately. Complete all configuration steps on both sides first.
         </div>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 16 }}>
+      <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer mb-4">
         <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
         Both sides are fully configured and the addresses above are correct.
       </label>
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div className="flex gap-4">
         {/* Left side peer */}
-        <div style={{ flex: 1 }}>
+        <div className="flex-1">
           <div className="label">{left.peerLabel}</div>
-          <div className="mono-block" style={{ marginBottom: 8 }}>{left.peerBytes32 || '(enter address above)'}</div>
+          <div className="mono-block mb-2">{left.peerBytes32 || '(enter address above)'}</div>
           {left.chainId > 0 && left.connectedChainId !== left.chainId && (
-            <button className="btn" style={{ fontSize: 11, padding: '3px 10px', marginBottom: 6 }} onClick={left.onSwitch}>
+            <button className="btn text-[11px] py-1 px-2.5 mb-1.5" onClick={left.onSwitch}>
               Switch to {left.chainName}
             </button>
           )}
@@ -641,14 +784,14 @@ function PeerConnectSection({ left, right, evm }: {
               Set Peer on {left.chainName}
             </button>
           </div>
-          <div style={{ marginTop: 6 }}><TxStatus state={leftTx} /></div>
+          <div className="mt-1.5"><TxStatus state={leftTx} /></div>
         </div>
         {/* Right side peer */}
-        <div style={{ flex: 1 }}>
+        <div className="flex-1">
           <div className="label">{right.peerLabel}</div>
-          <div className="mono-block" style={{ marginBottom: 8 }}>{right.peerBytes32 || '(enter address above)'}</div>
+          <div className="mono-block mb-2">{right.peerBytes32 || '(enter address above)'}</div>
           {right.chainId > 0 && right.connectedChainId !== right.chainId && (
-            <button className="btn" style={{ fontSize: 11, padding: '3px 10px', marginBottom: 6 }} onClick={right.onSwitch}>
+            <button className="btn text-[11px] py-1 px-2.5 mb-1.5" onClick={right.onSwitch}>
               Switch to {right.chainName}
             </button>
           )}
@@ -659,7 +802,7 @@ function PeerConnectSection({ left, right, evm }: {
               Set Peer on {right.chainName}
             </button>
           </div>
-          <div style={{ marginTop: 6 }}><TxStatus state={rightTx} /></div>
+          <div className="mt-1.5"><TxStatus state={rightTx} /></div>
         </div>
       </div>
     </div>
@@ -667,6 +810,10 @@ function PeerConnectSection({ left, right, evm }: {
 }
 
 // ── EVM-EVM configure panel (side-by-side) ────────────────────────────────────
+
+function checkPassed(result: PathwayVerifyResult | null, label: string): boolean {
+  return result?.checks.find((c) => c.label === label)?.passed ?? false;
+}
 
 function EvmEvmConfigurePanel({ homeChain, remoteChain, homeAddr, remoteAddr, mode, evm, wiring, verifyResult }: {
   homeChain: LZChain; remoteChain: LZChain;
@@ -679,13 +826,47 @@ function EvmEvmConfigurePanel({ homeChain, remoteChain, homeAddr, remoteAddr, mo
   const isAdapter = mode === 'bridge-oft';
   const homeConnected = evm.isConnected && evm.chainId === homeChain.chainId;
   const remoteConnected = evm.isConnected && evm.chainId === remoteChain.chainId;
+  const [evmSide, setEvmSide] = useState<'home' | 'remote'>('home');
+
+  const homeSteps = [
+    ...(isAdapter ? [{ label: 'Rate Limit', done: false }] : []),
+    { label: 'Libraries', done: checkPassed(verifyResult, 'Send library set') },
+    { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (send side)') && checkPassed(verifyResult, 'Executor configured') },
+    { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (send side)') },
+  ];
+
+  const remoteSteps = [
+    { label: 'Libraries', done: checkPassed(verifyResult, 'Receive library set') },
+    { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (receive side)') },
+    { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (receive side)') },
+  ];
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        {/* Home column */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <ChainColumnHeader label="EVM" chainName={homeChain.name} eid={homeChain.eid} connected={homeConnected} />
+      {/* Side tabs */}
+      <div className="flex gap-2 mb-4">
+        <button
+          className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${evmSide === 'home' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+          onClick={() => setEvmSide('home')}>
+          <span className="flex items-center gap-1.5">
+            {homeConnected && <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block" />}
+            {homeChain.name}
+          </span>
+        </button>
+        <button
+          className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${evmSide === 'remote' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+          onClick={() => setEvmSide('remote')}>
+          <span className="flex items-center gap-1.5">
+            {remoteConnected && <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block" />}
+            {remoteChain.name}
+          </span>
+        </button>
+      </div>
+
+      {evmSide === 'home' && (
+        <>
+          <ChainColumnHeader label={isAdapter ? 'Adapter' : 'OFT'} chainName={homeChain.name} eid={homeChain.eid} connected={homeConnected} />
+          <StepProgressBar steps={homeSteps} />
           <GuidedConfigure
             homeChain={homeChain} remoteChain={remoteChain}
             adapterAddr={homeAddr} peerAddr={remoteAddr}
@@ -694,10 +875,13 @@ function EvmEvmConfigurePanel({ homeChain, remoteChain, homeAddr, remoteAddr, mo
             wiring={wiring} verifyResult={verifyResult}
             isAdapter={isAdapter} isRemoteEvm={false} hidePeerStep
           />
-        </div>
-        {/* Remote column */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <ChainColumnHeader label="EVM" chainName={remoteChain.name} eid={remoteChain.eid} connected={remoteConnected} />
+        </>
+      )}
+
+      {evmSide === 'remote' && (
+        <>
+          <ChainColumnHeader label="OFT" chainName={remoteChain.name} eid={remoteChain.eid} connected={remoteConnected} />
+          <StepProgressBar steps={remoteSteps} />
           <GuidedConfigure
             homeChain={remoteChain} remoteChain={homeChain}
             adapterAddr={remoteAddr} peerAddr={homeAddr}
@@ -706,8 +890,8 @@ function EvmEvmConfigurePanel({ homeChain, remoteChain, homeAddr, remoteAddr, mo
             wiring={wiring} verifyResult={null}
             isAdapter={false} isRemoteEvm={false} hidePeerStep
           />
-        </div>
-      </div>
+        </>
+      )}
 
       <PeerConnectSection
         left={{
@@ -764,31 +948,32 @@ function StarknetConfigurePanel({ home, remote, homeAddr, remoteAddr, wiringMode
 
   const evmConnected  = evm.isConnected && evm.chainId === evmChainData.chainId;
   const starkConnected = stark.isConnected;
-  const starkHint = !starkConnected ? <span style={{ fontSize: 12, color: '#888' }}>Connect Starknet wallet first</span> : null;
+  const starkHint = !starkConnected ? <span className="text-xs text-on-surface-variant">Connect Starknet wallet first</span> : null;
 
-  // Starknet accordion
+  // Starknet accordion — correct LZ order: Delegate→Libraries→DVNs→Executor→EnforcedOptions→Peer(last)
   const [openStarkStep, setOpenStarkStep] = useState<number | null>(1);
   const toggleStark = (n: number) => setOpenStarkStep((p) => (p === n ? null : n));
 
   // Tx states
-  const [enforcedOptsTx, setEnforcedOptsTx] = useState<TxState>({ status: 'idle' });
+  const [delegateTx,     setDelegateTx]     = useState<TxState>({ status: 'idle' });
   const [libTx,          setLibTx]          = useState<TxState>({ status: 'idle' });
   const [sendConfigTx,   setSendConfigTx]   = useState<TxState>({ status: 'idle' });
-  const [executorTx,     setExecutorTx]     = useState<TxState>({ status: 'idle' });
   const [recvConfigTx,   setRecvConfigTx]   = useState<TxState>({ status: 'idle' });
-  const [delegateTx,     setDelegateTx]     = useState<TxState>({ status: 'idle' });
+  const [enforcedOptsTx, setEnforcedOptsTx] = useState<TxState>({ status: 'idle' });
 
   // Field state
-  const [cairoGas,         setCairoGas]         = useState('80000');
+  const [cairoDelegate,    setCairoDelegate]    = useState('');
   const [cairoLib,         setCairoLib]         = useState(starkChainData.sendLib ?? '');
   const [cairoGracePeriod, setCairoGracePeriod] = useState('0');
   const [cairoConfirm,     setCairoConfirm]     = useState(starkChainData.isTestnet ? '1' : '15');
-  const [cairoDelegate,    setCairoDelegate]    = useState('');
   const [cairoExecutor,    setCairoExecutor]    = useState(starkChainData.executor ?? '');
   const [cairoMaxMsgSize,  setCairoMaxMsgSize]  = useState('10000');
+  const [cairoGas,         setCairoGas]         = useState('80000');
 
+  // DVNs — single pair for send and receive (same DVNs on both directions is standard)
   const [sendDvns, setSendDvns] = useState<Map<string, DVNProvider>>(new Map());
   const [recvDvns, setRecvDvns] = useState<Map<string, DVNProvider>>(new Map());
+  const [sameRecvDvns, setSameRecvDvns] = useState(true);
   const { dvns: availableDvns, loading: dvnsLoading } = useDVNCatalog(starkChainData.chainKey);
 
   function toggleDvn(side: 'send' | 'recv', addr: string, provider: DVNProvider) {
@@ -796,14 +981,28 @@ function StarknetConfigurePanel({ home, remote, homeAddr, remoteAddr, wiringMode
     setter((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
   }
 
+  // When "same DVNs" toggle is on, keep recv in sync with send
+  function toggleSendDvn(addr: string, provider: DVNProvider) {
+    setSendDvns((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
+    if (sameRecvDvns) {
+      setRecvDvns((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
+    }
+  }
+
   // EVM column is always left, Starknet always right (symmetric regardless of home/remote)
   return (
     <div>
-      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <div className="flex gap-4 items-start">
 
         {/* ── EVM column (left) ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <ChainColumnHeader label="EVM" chainName={evmChainData.name} eid={evmChainData.eid} connected={evmConnected} />
+          <StepProgressBar steps={[
+            ...(isAdapter && evmIsHome ? [{ label: 'Rate Limit', done: false }] : []),
+            { label: 'Libraries', done: checkPassed(verifyResult, 'Send library set') },
+            { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (send side)') && checkPassed(verifyResult, 'Executor configured') },
+            { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (send side)') },
+          ]} />
           <GuidedConfigure
             homeChain={evmChainData}
             remoteChain={starkAsRemote}
@@ -822,44 +1021,55 @@ function StarknetConfigurePanel({ home, remote, homeAddr, remoteAddr, wiringMode
         </div>
 
         {/* ── Starknet column (right) ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <ChainColumnHeader label="Starknet" chainName={starkChainData.name} eid={starkChainData.eid} connected={starkConnected} />
 
-          {/* Step 1 — Enforced Options */}
-          <CairoStepCard n={1} title="Enforced Options" subtitle="Set minimum gas for lzReceive on the Starknet OFT."
+          <StepProgressBar steps={[
+            { label: 'Delegate',          done: delegateTx.status === 'success' },
+            { label: 'Message Libraries', done: libTx.status === 'success' },
+            { label: 'Send Config',       done: sendConfigTx.status === 'success' },
+            { label: 'Receive Config',    done: recvConfigTx.status === 'success' },
+            { label: 'Enforced Options',  done: enforcedOptsTx.status === 'success' },
+          ]} />
+
+          {/* Step 1 — Delegate (FIRST — required before endpoint can be configured) */}
+          <CairoStepCard n={1} title="Delegate" subtitle="Set delegate before configuring the endpoint. Required first step."
+            done={delegateTx.status === 'success'}
             open={openStarkStep === 1} onToggle={() => toggleStark(1)}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
-              <div>
-                <div className="label">Gas limit</div>
-                <input className="input" value={cairoGas} onChange={(e) => setCairoGas(e.target.value)} style={{ width: 140 }} />
-              </div>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr}
-                onClick={async () => { setEnforcedOptsTx({ status: 'pending' }); setEnforcedOptsTx(await cairoEndpoint.setEnforcedOptions(cairoAddr, evmChainData.eid, BigInt(cairoGas), starkChainData.rpc)); }}>
-                Set on Starknet OFT
+            <p className="step-hint">The delegate authorises an external account to configure the endpoint on behalf of this OFT. Must be set before steps 2–4.</p>
+            <div className="mb-2">
+              <div className="label">Delegate address</div>
+              <input className="input" value={cairoDelegate} onChange={(e) => setCairoDelegate(e.target.value)} placeholder="0x…" spellCheck={false} />
+            </div>
+            <div className="flex gap-2 items-center flex-wrap">
+              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoDelegate}
+                onClick={async () => { setDelegateTx({ status: 'pending' }); setDelegateTx(await cairoEndpoint.setDelegate(cairoAddr, cairoDelegate, starkChainData.rpc)); }}>
+                Set Delegate
               </button>
               {starkHint}
             </div>
-            <TxStatus state={enforcedOptsTx} />
+            <TxStatus state={delegateTx} />
           </CairoStepCard>
 
           {/* Step 2 — Message Libraries */}
-          <CairoStepCard n={2} title="Message Libraries" subtitle="Set send &amp; receive library. On Starknet both use the same address."
+          <CairoStepCard n={2} title="Message Libraries" subtitle="Set send & receive library. On Starknet both use the same address."
+            done={libTx.status === 'success'}
             open={openStarkStep === 2} onToggle={() => toggleStark(2)}>
             <p className="step-hint">SendUln302 and ReceiveUln302 are the same contract on Starknet — one address sets both directions.</p>
             {starkChainData.sendLib && (
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
-                Known lib: <span style={{ color: '#aaa', fontFamily: 'monospace', fontSize: 11 }}>{starkChainData.sendLib}</span>
+              <div className="text-xs text-on-surface-variant mb-2">
+                Known lib: <span className="font-mono text-[11px] text-on-surface">{starkChainData.sendLib}</span>
               </div>
             )}
-            <div style={{ marginBottom: 8 }}>
+            <div className="mb-2">
               <div className="label">Library address (ULN302)</div>
               <input className="input" value={cairoLib} onChange={(e) => setCairoLib(e.target.value)} placeholder="0x…" spellCheck={false} />
             </div>
-            <div style={{ marginBottom: 8 }}>
+            <div className="mb-2">
               <div className="label">Grace period (blocks, 0 = immediate)</div>
-              <input className="input" value={cairoGracePeriod} onChange={(e) => setCairoGracePeriod(e.target.value)} style={{ width: 120 }} />
+              <input className="input w-[120px]" value={cairoGracePeriod} onChange={(e) => setCairoGracePeriod(e.target.value)} />
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="flex gap-2 items-center flex-wrap">
               <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoLib}
                 onClick={async () => { setLibTx({ status: 'pending' }); setLibTx(await cairoEndpoint.setLibraries(starkChainData.endpoint, cairoAddr, evmChainData.eid, cairoLib, Number(cairoGracePeriod), starkChainData.rpc)); }}>
                 Set Send &amp; Receive Library
@@ -869,105 +1079,111 @@ function StarknetConfigurePanel({ home, remote, homeAddr, remoteAddr, wiringMode
             <TxStatus state={libTx} />
           </CairoStepCard>
 
-          {/* Step 3 — DVN Send Config */}
-          <CairoStepCard n={3} title="DVN Send Config" subtitle="Select DVNs and set ULN send config on the Starknet Endpoint."
+          {/* Step 3 — Send Config: DVN + Executor (atomic, per LZ SDK recommendation) */}
+          <CairoStepCard n={3} title="Send Config" subtitle="Set DVN security stack + executor atomically on the Starknet Endpoint (send direction)."
+            done={sendConfigTx.status === 'success'}
             open={openStarkStep === 3} onToggle={() => toggleStark(3)}>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Library address (from step 2)</div>
-              <input className="input" value={cairoLib} onChange={(e) => setCairoLib(e.target.value)} placeholder="0x…" spellCheck={false} />
+            <p className="step-hint">DVN and executor are set together in one transaction (LZ recommended). DVN addresses are sorted ascending automatically.</p>
+            <div className="mb-2 text-xs text-on-surface-variant">
+              Using library: <span className="font-mono text-on-surface">{cairoLib || <span className="text-outline-variant">not set — configure in step 2</span>}</span>
             </div>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Required DVNs</div>
-              <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={sendDvns} onToggle={(a, p) => toggleDvn('send', a, p)} />
-              {sendDvns.size === 0 && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>Select at least one DVN</div>}
+            <div className="mb-2">
+              <div className="label">Required DVNs (send — Starknet → EVM)</div>
+              <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={sendDvns} onToggle={(a, p) => toggleSendDvn(a, p)} />
+              {sendDvns.size === 0 && <div className="text-[11px] text-on-surface-variant mt-1">Select at least one DVN</div>}
             </div>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Block confirmations</div>
-              <input className="input" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} style={{ width: 100 }} />
+            <div className="form-grid mb-2">
+              <div>
+                <div className="label">Block confirmations</div>
+                <input className="input" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} />
+              </div>
+              <div>
+                <div className="label">Max message size (bytes)</div>
+                <input className="input" value={cairoMaxMsgSize} onChange={(e) => setCairoMaxMsgSize(e.target.value)} />
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoLib || sendDvns.size === 0}
+            <div className="mb-2">
+              <div className="label">Executor address</div>
+              <input className="input" value={cairoExecutor} onChange={(e) => setCairoExecutor(e.target.value)} placeholder="0x…" spellCheck={false} />
+            </div>
+            <div className="flex gap-2 items-center flex-wrap">
+              <button className="btn btn-primary"
+                disabled={!starkConnected || !cairoAddr || !cairoLib || sendDvns.size === 0 || !cairoExecutor}
                 onClick={async () => {
                   setSendConfigTx({ status: 'pending' });
-                  setSendConfigTx(await cairoEndpoint.setUlnSendConfig(starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
-                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...sendDvns.keys()]) }, starkChainData.rpc));
-                }}>Set DVN Send Config</button>
+                  setSendConfigTx(await cairoEndpoint.setSendConfigsAtomic(
+                    starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
+                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...sendDvns.keys()]) },
+                    { maxMessageSize: Number(cairoMaxMsgSize), executor: cairoExecutor },
+                    starkChainData.rpc,
+                  ));
+                }}>Set Send Config (DVN + Executor)</button>
               {starkHint}
             </div>
             <TxStatus state={sendConfigTx} />
           </CairoStepCard>
 
-          {/* Step 4 — Executor Config */}
-          <CairoStepCard n={4} title="Executor Config" subtitle="Set max message size and executor address."
+          {/* Step 4 — Receive Config: DVN only (executor not used on receive side) */}
+          <CairoStepCard n={4} title="Receive Config" subtitle="Set DVN security stack on the Starknet Endpoint (receive direction)."
+            done={recvConfigTx.status === 'success'}
             open={openStarkStep === 4} onToggle={() => toggleStark(4)}>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Library address (from step 2)</div>
-              <input className="input" value={cairoLib} onChange={(e) => setCairoLib(e.target.value)} placeholder="0x…" spellCheck={false} />
+            <p className="step-hint">Receive side only needs DVN config — no executor required. By default uses the same DVNs as send.</p>
+            <div className="mb-2 text-xs text-on-surface-variant">
+              Using library: <span className="font-mono text-on-surface">{cairoLib || <span className="text-outline-variant">not set — configure in step 2</span>}</span>
             </div>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Executor address</div>
-              <input className="input" value={cairoExecutor} onChange={(e) => setCairoExecutor(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Max message size (bytes)</div>
-              <input className="input" value={cairoMaxMsgSize} onChange={(e) => setCairoMaxMsgSize(e.target.value)} style={{ width: 120 }} />
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoLib || !cairoExecutor}
-                onClick={async () => {
-                  setExecutorTx({ status: 'pending' });
-                  setExecutorTx(await cairoEndpoint.setExecutorConfig(starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
-                    { maxMessageSize: Number(cairoMaxMsgSize), executor: cairoExecutor }, starkChainData.rpc));
-                }}>Set Executor Config</button>
-              {starkHint}
-            </div>
-            <TxStatus state={executorTx} />
-          </CairoStepCard>
-
-          {/* Step 5 — DVN Receive Config */}
-          <CairoStepCard n={5} title="DVN Receive Config" subtitle="Select DVNs and set ULN receive config on the Starknet Endpoint."
-            open={openStarkStep === 5} onToggle={() => toggleStark(5)}>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Library address (from step 2)</div>
-              <input className="input" value={cairoLib} onChange={(e) => setCairoLib(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Required DVNs</div>
-              <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={recvDvns} onToggle={(a, p) => toggleDvn('recv', a, p)} />
-              {recvDvns.size === 0 && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>Select at least one DVN</div>}
-            </div>
-            <div style={{ marginBottom: 8 }}>
+            {/* Same-DVNs toggle */}
+            <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer mb-2">
+              <input type="checkbox" checked={sameRecvDvns} onChange={(e) => {
+                setSameRecvDvns(e.target.checked);
+                if (e.target.checked) setRecvDvns(new Map(sendDvns));
+              }} />
+              Use same DVNs as send direction (recommended)
+            </label>
+            {!sameRecvDvns && (
+              <div className="mb-2">
+                <div className="label">Required DVNs (receive — EVM → Starknet)</div>
+                <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={recvDvns} onToggle={(a, p) => toggleDvn('recv', a, p)} />
+                {recvDvns.size === 0 && <div className="text-[11px] text-on-surface-variant mt-1">Select at least one DVN</div>}
+              </div>
+            )}
+            <div className="mb-2">
               <div className="label">Block confirmations</div>
-              <input className="input" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} style={{ width: 100 }} />
+              <input className="input w-[100px]" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} />
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoLib || recvDvns.size === 0}
+            <div className="flex gap-2 items-center flex-wrap">
+              <button className="btn btn-primary"
+                disabled={!starkConnected || !cairoAddr || !cairoLib || (sameRecvDvns ? sendDvns.size === 0 : recvDvns.size === 0)}
                 onClick={async () => {
                   setRecvConfigTx({ status: 'pending' });
-                  setRecvConfigTx(await cairoEndpoint.setUlnReceiveConfig(starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
-                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...recvDvns.keys()]) }, starkChainData.rpc));
-                }}>Set DVN Receive Config</button>
+                  const dvns = sameRecvDvns ? sendDvns : recvDvns;
+                  setRecvConfigTx(await cairoEndpoint.setUlnReceiveConfig(
+                    starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
+                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...dvns.keys()]) },
+                    starkChainData.rpc,
+                  ));
+                }}>Set Receive Config</button>
               {starkHint}
             </div>
             <TxStatus state={recvConfigTx} />
           </CairoStepCard>
 
-          {/* Step 6 — Delegate */}
-          <CairoStepCard n={6} title="Delegate" subtitle="Allow a delegate to configure the endpoint on behalf of this OFT."
-            open={openStarkStep === 6} onToggle={() => toggleStark(6)}>
-            <p className="step-hint">Required before configuring the endpoint from an external account.</p>
-            <div style={{ marginBottom: 8 }}>
-              <div className="label">Delegate address</div>
-              <input className="input" value={cairoDelegate} onChange={(e) => setCairoDelegate(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoDelegate}
-                onClick={async () => { setDelegateTx({ status: 'pending' }); setDelegateTx(await cairoEndpoint.setDelegate(cairoAddr, cairoDelegate, starkChainData.rpc)); }}>
-                Set Delegate
+          {/* Step 5 — Enforced Options (AFTER DVNs and executor, before peers) */}
+          <CairoStepCard n={5} title="Enforced Options" subtitle="Set minimum gas for lzReceive on the Starknet OFT."
+            done={enforcedOptsTx.status === 'success'}
+            open={openStarkStep === 5} onToggle={() => toggleStark(5)}>
+            <p className="step-hint">Must be set after DVN and executor config, but before opening peers.</p>
+            <div className="flex gap-2 items-end flex-wrap mb-2">
+              <div>
+                <div className="label">Gas limit for lzReceive</div>
+                <input className="input w-[140px]" value={cairoGas} onChange={(e) => setCairoGas(e.target.value)} />
+              </div>
+              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr}
+                onClick={async () => { setEnforcedOptsTx({ status: 'pending' }); setEnforcedOptsTx(await cairoEndpoint.setEnforcedOptions(cairoAddr, evmChainData.eid, BigInt(cairoGas), starkChainData.rpc)); }}>
+                Set on Starknet OFT
               </button>
               {starkHint}
             </div>
-            <TxStatus state={delegateTx} />
+            <TxStatus state={enforcedOptsTx} />
           </CairoStepCard>
         </div>
 
@@ -1008,33 +1224,27 @@ function CairoDVNPicker({ dvns, loading, selected, onToggle }: {
   selected: Map<string, DVNProvider>;
   onToggle: (addr: string, provider: DVNProvider) => void;
 }): JSX.Element {
-  if (loading) return <div style={{ fontSize: 12, color: '#888' }}>Loading DVNs…</div>;
+  if (loading) return <div className="text-xs text-on-surface-variant">Loading DVNs…</div>;
   if (dvns.length === 0) return (
-    <div style={{ fontSize: 12, color: '#888' }}>No DVNs found for this chain. Enter addresses manually if needed.</div>
+    <div className="text-xs text-on-surface-variant">No DVNs found for this chain. Enter addresses manually if needed.</div>
   );
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div className="flex flex-col gap-1">
       {dvns.map((p) => {
         const addr = p.address.toLowerCase();
         const checked = selected.has(addr);
-        const initials = p.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
         return (
           <label key={p.address} style={{
             display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-            padding: '6px 8px', borderRadius: 5,
+            padding: '6px 8px', borderRadius: 6,
             background: checked ? p.color + '15' : 'transparent',
-            border: `1px solid ${checked ? p.color + '66' : '#222'}`,
+            border: `1px solid ${checked ? p.color + '66' : 'rgba(64,72,93,0.3)'}`,
           }}>
             <input type="checkbox" checked={checked} onChange={() => onToggle(addr, p)} />
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 22, height: 22, borderRadius: '50%',
-              background: p.color + '33', border: `1px solid ${p.color}`,
-              color: p.color, fontSize: 9, fontWeight: 700, flexShrink: 0,
-            }}>{initials}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
-              <div style={{ fontSize: 10, color: '#666', fontFamily: 'monospace' }}>{p.address.slice(0, 12)}…{p.address.slice(-6)}</div>
+            <DVNIcon provider={p} size={22} />
+            <div className="flex-1">
+              <div className="text-[13px] font-semibold text-on-surface">{p.name}</div>
+              <div className="text-[10px] text-on-surface-variant font-mono">{p.address.slice(0, 12)}…{p.address.slice(-6)}</div>
             </div>
           </label>
         );
@@ -1043,22 +1253,45 @@ function CairoDVNPicker({ dvns, loading, selected, onToggle }: {
   );
 }
 
-function CairoStepCard({ n, title, subtitle, open, onToggle, children }: {
+function CairoStepCard({ n, title, subtitle, done, open, onToggle, children }: {
   n: number; title: string; subtitle: string;
+  /** true = completed this session (tx success) */
+  done?: boolean;
   open: boolean; onToggle: () => void;
   children: React.ReactNode;
 }): JSX.Element {
   return (
-    <div className={`step-card${open ? ' step-card-open' : ''}`} style={{ marginTop: 6 }}>
-      <button className="step-header" onClick={onToggle}>
-        <span className="step-num">{n}</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontWeight: 600 }}>{title}</div>
-          <div style={{ fontSize: 12, color: '#888' }}>{subtitle}</div>
+    <div className={`bg-surface-container rounded-lg border mt-1.5 overflow-hidden ${open ? 'border-outline-variant/20' : done ? 'border-secondary/20' : 'border-outline-variant/10'}`}>
+      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-container-high transition-colors" onClick={onToggle}>
+        <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0 ${done ? 'bg-secondary/15 border border-secondary/40 text-secondary' : 'bg-primary/10 border border-primary/20 text-primary'}`}>
+          {done ? '✓' : n}
+        </span>
+        <div className="flex-1">
+          <div className={`font-headline text-sm font-semibold ${done ? 'text-secondary' : 'text-on-surface'}`}>{title}</div>
+          <div className="text-[11px] text-on-surface-variant">{subtitle}</div>
         </div>
-        <span style={{ color: '#666', fontSize: 12, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
+        <span className="text-on-surface-variant text-xs ml-2">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="step-body">{children}</div>}
+      {open && <div className="px-4 pb-4 pt-2 border-t border-outline-variant/10">{children}</div>}
+    </div>
+  );
+}
+
+/** Compact step progress bar — shows X/total steps with colour-coded dots. */
+function StepProgressBar({ steps }: { steps: Array<{ label: string; done: boolean }> }): JSX.Element {
+  const doneCount = steps.filter((s) => s.done).length;
+  const allDone = doneCount === steps.length;
+  return (
+    <div className="flex items-center gap-3 mb-3 px-1">
+      <div className="flex gap-1.5">
+        {steps.map((s, i) => (
+          <span key={i} title={s.label}
+            className={`w-2 h-2 rounded-full transition-colors ${s.done ? 'bg-secondary' : 'bg-outline-variant/30'}`} />
+        ))}
+      </div>
+      <span className={`text-[11px] font-mono ${allDone ? 'text-secondary' : 'text-on-surface-variant'}`}>
+        {doneCount}/{steps.length} steps {allDone ? 'complete ✓' : 'done'}
+      </span>
     </div>
   );
 }
@@ -1081,15 +1314,14 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
   const [showAll, setShowAll] = useState(false);
 
   return (
-    <div className="card" style={{ padding: '14px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+    <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-4">
+      <div className="flex items-center justify-between mb-3">
         <div>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>Connected Peers</div>
-          <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>{chainName || 'select home chain'}</div>
+          <div className="font-headline text-sm font-bold text-on-surface">Connected Peers</div>
+          <div className="text-[11px] text-on-surface-variant mt-0.5">{chainName || 'select home chain'}</div>
         </div>
         <button
-          className="btn btn-primary"
-          style={{ fontSize: 12, padding: '4px 10px' }}
+          className="btn btn-primary text-[12px] py-1 px-2.5"
           disabled={!canScan || scanning}
           onClick={onScan}
           title={!canScan ? 'Enter a contract address and select home chain first' : ''}
@@ -1099,38 +1331,38 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
       </div>
 
       {!peers && !scanning && !error && (
-        <div style={{ fontSize: 12, color: '#555', textAlign: 'center', padding: '20px 0' }}>
+        <div className="text-xs text-on-surface-variant text-center py-5">
           Enter a contract address above and press <strong>Scan</strong> to discover all connected chains.
         </div>
       )}
 
       {scanning && (
-        <div style={{ fontSize: 12, color: '#888', textAlign: 'center', padding: '20px 0' }}>
+        <div className="text-xs text-on-surface-variant text-center py-5">
           Querying {isTestnet ? 'testnet' : 'mainnet'} chains…
         </div>
       )}
 
       {error && (
-        <div style={{ fontSize: 12, color: '#ff6b6b', wordBreak: 'break-all' }}>Error: {error}</div>
+        <div className="text-xs text-error break-all">Error: {error}</div>
       )}
 
       {peers && !scanning && (
         <>
           {/* Summary */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, fontSize: 12 }}>
-            <span style={{ color: '#6bcb77', fontWeight: 600 }}>{connected.length} connected</span>
-            <span style={{ color: '#555' }}>/ {peers.length} checked</span>
+          <div className="flex gap-2 mb-3 text-xs">
+            <span className="text-secondary font-semibold">{connected.length} connected</span>
+            <span className="text-on-surface-variant">/ {peers.length} checked</span>
           </div>
 
           {/* Adapter address */}
-          <div style={{ marginBottom: 10, padding: '6px 8px', background: '#0e0e1a', borderRadius: 5, border: '1px solid #2a2a3a' }}>
-            <div style={{ fontSize: 10, color: '#555', marginBottom: 2 }}>{bridgeLabel}</div>
-            <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#aaa', wordBreak: 'break-all' }}>{bridgeAddr}</div>
+          <div className="mb-3 p-2 bg-surface-container rounded-lg border border-outline-variant/10">
+            <div className="text-[10px] text-on-surface-variant mb-0.5">{bridgeLabel}</div>
+            <div className="font-mono text-[11px] text-on-surface break-all">{bridgeAddr}</div>
           </div>
 
           {/* Connected peers */}
           {connected.length === 0 && (
-            <div style={{ fontSize: 12, color: '#666', textAlign: 'center', padding: '8px 0' }}>No peers set</div>
+            <div className="text-xs text-on-surface-variant text-center py-2">No peers set</div>
           )}
           {connected.map((p) => (
             <PeerRow key={p.eid} entry={p} />
@@ -1140,8 +1372,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
           {unset.length > 0 && (
             <>
               <button
-                className="btn btn-ghost"
-                style={{ fontSize: 11, width: '100%', marginTop: 8, justifyContent: 'center' }}
+                className="btn btn-ghost text-[11px] w-full mt-2 justify-center"
                 onClick={() => setShowAll((v) => !v)}
               >
                 {showAll ? '▲ Hide' : `▼ Show ${unset.length} unset chain${unset.length > 1 ? 's' : ''}`}
@@ -1173,28 +1404,21 @@ function PeerRow({ entry }: { entry: PeerEntry }): JSX.Element {
   }
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 2,
-      padding: '8px 10px', marginBottom: 6,
-      background: isSet ? '#0a120a' : '#0e0e0e',
-      border: `1px solid ${isSet ? '#1a3a1a' : '#1a1a1a'}`,
-      borderRadius: 6,
-      opacity: isSet ? 1 : 0.5,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: isSet ? '#ccc' : '#555' }}>
-          <span style={{ marginRight: 6, fontSize: 10 }}>{isSet ? '🟢' : '⚪'}</span>
+    <div className={`flex flex-col gap-0.5 p-2 mb-1.5 rounded-lg border ${isSet ? 'bg-secondary/5 border-secondary/20' : 'bg-surface-container border-outline-variant/10 opacity-40'}`}>
+      <div className="flex items-center justify-between">
+        <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${isSet ? 'text-on-surface' : 'text-on-surface-variant'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSet ? 'bg-secondary' : 'bg-outline-variant'}`}></span>
           {entry.name}
         </span>
-        <span style={{ fontSize: 10, color: '#555' }}>EID {entry.eid}</span>
+        <span className="text-[10px] text-on-surface-variant">EID {entry.eid}</span>
       </div>
       {isSet && (
-        <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#7a9c7a', wordBreak: 'break-all' }}>
+        <div className="font-mono text-[11px] text-secondary break-all">
           {displayPeer.slice(0, 14)}…{displayPeer.slice(-8)}
         </div>
       )}
       {entry.error && (
-        <div style={{ fontSize: 10, color: '#ff6b6b' }}>read error</div>
+        <div className="text-[10px] text-error">read error</div>
       )}
     </div>
   );
@@ -1204,10 +1428,10 @@ function PeerRow({ entry }: { entry: PeerEntry }): JSX.Element {
 
 function TokenBadge({ label, name, symbol }: { label: string; name: string; symbol: string }): JSX.Element {
   return (
-    <div style={{ textAlign: 'center' }}>
-      <div className="label" style={{ marginBottom: 2 }}>{label}</div>
-      <div style={{ fontWeight: 700, fontSize: 15 }}>{symbol}</div>
-      <div style={{ fontSize: 12, color: '#888' }}>{name}</div>
+    <div className="text-center">
+      <div className="label mb-0.5">{label}</div>
+      <div className="font-headline font-bold text-base text-on-surface">{symbol}</div>
+      <div className="text-xs text-on-surface-variant">{name}</div>
     </div>
   );
 }
@@ -1238,24 +1462,25 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
   const criticalFailed = result?.checks.filter((c) => !c.passed && c.severity === 'critical') ?? [];
   const warnFailed = result?.checks.filter((c) => !c.passed && c.severity === 'warning') ?? [];
   const passed = result?.checks.filter((c) => c.passed) ?? [];
+  const [showPassed, setShowPassed] = useState(false);
 
   return (
-    <section className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
+      <div className="flex justify-between items-center mb-4">
         <div>
-          <h3 style={{ margin: 0 }}>Pathway verification</h3>
-          <span style={{ color: '#888', fontSize: 13 }}>
+          <h3 className="font-headline text-base font-bold text-on-surface m-0">Pathway verification</h3>
+          <span className="text-xs text-on-surface-variant">
             {homeChain.name} (EID {homeChain.eid}) → {remoteChain.name} (EID {remoteChain.eid})
           </span>
         </div>
         <button className="btn" onClick={onVerify} disabled={verifying}>
-          {verifying ? 'Checking…' : 'Run checks'}
+          {verifying ? 'Checking…' : 'Re-run checks'}
         </button>
       </div>
 
       {!result && !verifying && (
-        <p style={{ color: '#666', fontSize: 13 }}>
-          Press <strong>Run checks</strong> to read on-chain config from both endpoints.
+        <p className="text-xs text-on-surface-variant">
+          Checks run automatically when addresses are entered. Press <strong>Re-run checks</strong> to refresh.
         </p>
       )}
 
@@ -1276,26 +1501,48 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 12, margin: '12px 0', fontSize: 13 }}>
-            {criticalFailed.length > 0 && <span style={{ color: '#ff6b6b' }}>{criticalFailed.length} critical</span>}
-            {warnFailed.length > 0 && <span style={{ color: '#ffd93d' }}>{warnFailed.length} warning{warnFailed.length > 1 ? 's' : ''}</span>}
-            {criticalFailed.length === 0 && warnFailed.length === 0 && <span style={{ color: '#6bcb77' }}>All checks passed</span>}
-            <span style={{ color: '#555' }}>{passed.length}/{result.checks.length} passed</span>
+          <div className="flex gap-3 my-3 text-xs">
+            {criticalFailed.length > 0 && <span className="text-error font-semibold">{criticalFailed.length} critical</span>}
+            {warnFailed.length > 0 && <span className="text-warning font-semibold">{warnFailed.length} warning{warnFailed.length > 1 ? 's' : ''}</span>}
+            {criticalFailed.length === 0 && warnFailed.length === 0 && <span className="text-secondary font-semibold">All checks passed</span>}
+            <span className="text-on-surface-variant">{passed.length}/{result.checks.length} passed</span>
           </div>
 
-          {result.checks.map((c, i) => (
-            <div key={i} className={`check-row ${c.passed ? 'check-pass' : c.severity === 'critical' ? 'check-critical' : c.severity === 'warning' ? 'check-warn' : 'check-info'}`}>
-              <span className="check-icon">{c.passed ? '✓' : c.severity === 'critical' ? '✗' : c.severity === 'warning' ? '!' : 'i'}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{c.label}</div>
-                <div style={{ fontSize: 12, opacity: 0.8, wordBreak: 'break-all' }}>{resolveDetail(c.detail)}</div>
+          {/* Failed checks always shown */}
+          {[...criticalFailed, ...warnFailed].map((c, i) => (
+            <div key={i} className={`check-row ${c.severity === 'critical' ? 'check-critical' : 'check-warn'}`}>
+              <span className="check-icon">{c.severity === 'critical' ? '✗' : '!'}</span>
+              <div className="flex-1">
+                <div className="font-semibold">{c.label}</div>
+                <div className="text-xs opacity-80 break-all">{resolveDetail(c.detail)}</div>
               </div>
             </div>
           ))}
 
-          <details style={{ marginTop: 12 }}>
-            <summary style={{ cursor: 'pointer', color: '#888', fontSize: 13 }}>Raw values</summary>
-            <div style={{ marginTop: 8, fontSize: 12 }}>
+          {/* Passed checks collapsed by default */}
+          {passed.length > 0 && (
+            <>
+              <button
+                className="btn btn-ghost text-[11px] w-full mt-2 justify-center"
+                onClick={() => setShowPassed((v) => !v)}
+              >
+                {showPassed ? '▲ Hide passed checks' : `▼ Show ${passed.length} passed check${passed.length > 1 ? 's' : ''}`}
+              </button>
+              {showPassed && passed.map((c, i) => (
+                <div key={i} className="check-row check-pass">
+                  <span className="check-icon">✓</span>
+                  <div className="flex-1">
+                    <div className="font-semibold">{c.label}</div>
+                    <div className="text-xs opacity-80 break-all">{resolveDetail(c.detail)}</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs text-on-surface-variant">Raw values</summary>
+            <div className="mt-2 text-xs">
               <RawSection title={`${homeChain.name} — send side`}>
                 <RawRow label="EID" value={String(homeChain.eid)} />
                 <RawRow label="Send library" value={result.homeSendLib} />
@@ -1329,16 +1576,16 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
 function SummaryItem({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div>
-      <div className="label" style={{ marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 12, wordBreak: 'break-all', color: value === '—' ? '#444' : '#ccc' }}>{value}</div>
+      <div className="label mb-0.5">{label}</div>
+      <div className={`text-xs break-all ${value === '—' ? 'text-on-surface-variant/40' : 'text-on-surface'}`}>{value}</div>
     </div>
   );
 }
 
 function RawSection({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ color: '#aaa', marginBottom: 4 }}>{title}</div>
+    <div className="mb-3">
+      <div className="text-on-surface-variant font-semibold mb-1">{title}</div>
       {children}
     </div>
   );
@@ -1346,16 +1593,16 @@ function RawSection({ title, children }: { title: string; children: React.ReactN
 
 function RawRow({ label, value }: { label: string; value: string | null | undefined }): JSX.Element {
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 2 }}>
-      <span style={{ color: '#666', minWidth: 140 }}>{label}</span>
-      <span style={{ wordBreak: 'break-all' }}>{value ?? '—'}</span>
+    <div className="flex gap-2 mb-0.5">
+      <span className="text-on-surface-variant min-w-[140px]">{label}</span>
+      <span className="break-all text-on-surface">{value ?? '—'}</span>
     </div>
   );
 }
 
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }): JSX.Element {
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div className="mb-2">
       <div className="label">{label}</div>
       <input className="input" value={value} onChange={(e) => onChange(e.target.value)} spellCheck={false} />
     </div>

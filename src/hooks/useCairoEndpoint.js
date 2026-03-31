@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
-import { Contract, RpcProvider } from 'starknet';
+import { Contract, RpcProvider, CallData } from 'starknet';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import { CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN, encodeUlnConfig, encodeExecutorConfig } from '@/utils/cairoLzConfig';
-import StarknetOFTABI from '@/abis/StarknetOFT.json';
-import StarknetEndpointABI from '@/abis/StarknetEndpoint.json';
+import StarknetOFTABI from '@/abis/svm/OFT.json';
+import StarknetEndpointABI from '@/abis/svm/EndpointV2.json';
 const MSG_TYPE_SEND = 1;
 /**
  * Convert raw hex bytes (e.g. from buildLzReceiveOption) into a starknet.js
@@ -57,6 +57,25 @@ export function useCairoEndpoint(account) {
             const response = await account.execute([sendCall, recvCall]);
             await account.waitForTransaction(response.transaction_hash);
             return { status: 'success', hash: response.transaction_hash };
+        }
+        catch (e) {
+            return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+        }
+    }, [account]);
+    const setSendConfigsAtomic = useCallback(async (endpointAddr, oappAddr, libAddr, remoteEid, uln, executor, rpc) => {
+        if (!account)
+            return { status: 'error', message: 'Starknet wallet not connected' };
+        try {
+            const provider = new RpcProvider({ nodeUrl: rpc });
+            const contract = new Contract(StarknetEndpointABI, endpointAddr, provider);
+            contract.connect(account);
+            // Combine ULN + Executor in one atomic set_send_configs call (LZ SDK recommendation)
+            const tx = await contract.set_send_configs(oappAddr, libAddr, [
+                { eid: remoteEid, config_type: CONFIG_TYPE_ULN, config: encodeUlnConfig(uln) },
+                { eid: remoteEid, config_type: CONFIG_TYPE_EXECUTOR, config: encodeExecutorConfig(executor) },
+            ]);
+            await account.waitForTransaction(tx.transaction_hash);
+            return { status: 'success', hash: tx.transaction_hash };
         }
         catch (e) {
             return { status: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -164,13 +183,15 @@ export function useCairoEndpoint(account) {
     const readSendLibrary = useCallback(async (endpointAddr, oappAddr, eid, rpc) => {
         try {
             const provider = new RpcProvider({ nodeUrl: rpc });
-            const contract = new Contract(StarknetEndpointABI, endpointAddr, provider);
-            const result = await contract.get_send_library(oappAddr, eid);
-            // Returns GetLibraryResponse { lib, is_default } or raw address depending on starknet.js version
-            const addr = typeof result === 'object' && result !== null && 'lib' in result
-                ? String(result.lib)
-                : String(result);
-            return addr === '0x0' || addr === '0' ? null : addr;
+            // get_send_library returns GetLibraryResponse { lib: ContractAddress, is_default: bool }
+            // raw calldata result: [lib_felt, is_default_variant]
+            const result = await provider.callContract({
+                contractAddress: endpointAddr,
+                entrypoint: 'get_send_library',
+                calldata: CallData.compile([oappAddr, eid]),
+            });
+            const addr = result[0];
+            return BigInt(addr) === 0n ? null : addr;
         }
         catch {
             return null;
@@ -179,25 +200,16 @@ export function useCairoEndpoint(account) {
     const readReceiveLibrary = useCallback(async (endpointAddr, oappAddr, eid, rpc) => {
         try {
             const provider = new RpcProvider({ nodeUrl: rpc });
-            const contract = new Contract(StarknetEndpointABI, endpointAddr, provider);
-            const result = await contract.get_receive_library(oappAddr, eid);
-            // Returns GetLibraryResponse { lib, is_default }
-            let lib;
-            let isDefault;
-            if (typeof result === 'object' && result !== null && 'lib' in result) {
-                const r = result;
-                lib = String(r.lib);
-                isDefault = Boolean(r.is_default);
-            }
-            else if (Array.isArray(result)) {
-                lib = String(result[0]);
-                isDefault = Boolean(result[1]);
-            }
-            else {
-                lib = String(result);
-                isDefault = false;
-            }
-            return { lib: lib === '0x0' || lib === '0' ? null : lib, isDefault };
+            // get_receive_library returns GetLibraryResponse { lib: ContractAddress, is_default: bool }
+            // raw calldata result: [lib_felt, is_default_variant (0=False, 1=True)]
+            const result = await provider.callContract({
+                contractAddress: endpointAddr,
+                entrypoint: 'get_receive_library',
+                calldata: CallData.compile([oappAddr, eid]),
+            });
+            const addr = result[0];
+            const isDefault = BigInt(result[1]) !== 0n;
+            return { lib: BigInt(addr) === 0n ? null : addr, isDefault };
         }
         catch {
             return { lib: null, isDefault: false };
@@ -206,10 +218,14 @@ export function useCairoEndpoint(account) {
     const readDelegate = useCallback(async (endpointAddr, oappAddr, rpc) => {
         try {
             const provider = new RpcProvider({ nodeUrl: rpc });
-            const contract = new Contract(StarknetEndpointABI, endpointAddr, provider);
-            const result = await contract.get_delegate(oappAddr);
-            const addr = typeof result === 'string' ? result : String(result);
-            return addr === '0x0' || addr === '0' ? null : addr;
+            // get_delegate returns ContractAddress → raw result: [addr_felt]
+            const result = await provider.callContract({
+                contractAddress: endpointAddr,
+                entrypoint: 'get_delegate',
+                calldata: CallData.compile([oappAddr]),
+            });
+            const addr = result[0];
+            return BigInt(addr) === 0n ? null : addr;
         }
         catch {
             return null;
@@ -217,7 +233,7 @@ export function useCairoEndpoint(account) {
     }, []);
     return {
         setEnforcedOptions, setLibraries, setSendLibrary, setReceiveLibrary,
-        setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
+        setSendConfigsAtomic, setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
         setDelegate, readSendLibrary, readReceiveLibrary, readDelegate,
     };
 }

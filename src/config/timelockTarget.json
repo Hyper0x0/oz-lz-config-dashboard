@@ -1,0 +1,88 @@
+{
+  "description": "Replace this ABI with your own contract's ABI. Only non-view functions will appear in the Timelock operation builder. The 'address' field sets the default target address.",
+  "address": "",
+  "abi": [
+    {
+      "type": "function",
+      "name": "registerVault",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vault",  "type": "address" },
+        { "name": "pool",   "type": "address" },
+        { "name": "share",  "type": "address" },
+        { "name": "oft",    "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setVaultState",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId", "type": "uint256" },
+        { "name": "state",   "type": "uint8" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setVaultOft",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId", "type": "uint256" },
+        { "name": "oft",     "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setPerformanceFeeBps",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId", "type": "uint256" },
+        { "name": "bps",     "type": "uint256" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setMaintenanceFeeBps",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId", "type": "uint256" },
+        { "name": "bps",     "type": "uint256" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setFeeRecipient",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId",   "type": "uint256" },
+        { "name": "recipient", "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setKeeper",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId", "type": "uint256" },
+        { "name": "keeper",  "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setAllocator",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "vaultId",   "type": "uint256" },
+        { "name": "allocator", "type": "address" }
+      ],
+      "outputs": []
+    }
+  ]
+}

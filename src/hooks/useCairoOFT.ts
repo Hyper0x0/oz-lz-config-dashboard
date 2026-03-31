@@ -3,7 +3,7 @@ import { RpcProvider, CallData, Contract } from 'starknet';
 import { STARKNET_TESTNET } from '@/config/chains';
 import type { WalletAccount } from 'starknet';
 import type { TxState, PeerEntry } from '@/types';
-import StarknetOFTABI from '@/abis/StarknetOFT.json';
+import StarknetOFTABI from '@/abis/svm/OFT.json';
 
 /** Convert an EVM address (0x hex) to the Bytes32 low/high calldata for Cairo set_peer. */
 function evmAddrToBytes32Calldata(evmAddr: string): [string, string] {
