@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import packageJson from '../../package.json';
+import { Section } from '@/components/Section';
 
 const STORAGE_KEY = 'ozlz_rpc_overrides';
 
@@ -36,24 +37,15 @@ function SettingRow({ label, hint, value, onChange, placeholder }: {
 }): JSX.Element {
   return (
     <div className="mb-5">
-      <label className="block font-headline text-sm font-semibold text-on-surface mb-0.5">{label}</label>
+      <div className="label">{label}</div>
       <p className="text-xs text-on-surface-variant mb-2">{hint}</p>
       <input
-        className="input w-full max-w-lg font-mono text-[12px]"
+        className="input"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         spellCheck={false}
       />
-    </div>
-  );
-}
-
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 mb-5">
-      <h3 className="font-headline text-base font-bold text-on-surface mb-4">{title}</h3>
-      {children}
     </div>
   );
 }
@@ -86,13 +78,9 @@ export function Settings(): JSX.Element {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl space-y-6">
 
-      <SectionCard title="Starknet RPC Endpoints">
-        <p className="text-xs text-on-surface-variant mb-4">
-          Override the default public RPC endpoints. Leave blank to use the defaults.
-          Changes take effect on next page load.
-        </p>
+      <Section icon="dns" title="Starknet RPC Endpoints" subtitle="Override default public RPC endpoints. Leave blank for defaults.">
         <SettingRow
           label="Starknet Mainnet"
           hint="Default: https://rpc.starknet.lava.build (fallback: https://starknet.drpc.org)"
@@ -112,15 +100,15 @@ export function Settings(): JSX.Element {
           <button className="btn" onClick={handleReset}>Reset to defaults</button>
           {saved && <span className="text-xs text-secondary">Saved — reload to apply</span>}
         </div>
-      </SectionCard>
+      </Section>
 
-      <SectionCard title="Current Configuration">
+      <Section icon="info" title="Current Configuration" subtitle="Active runtime settings">
         <div className="text-xs font-mono space-y-1.5 text-on-surface-variant">
-          <div className="flex gap-2"><span className="text-outline-variant w-40 flex-shrink-0">Version</span><span className="text-on-surface">v{packageJson.version}</span></div>
-          <div className="flex gap-2"><span className="text-outline-variant w-40 flex-shrink-0">Starknet mainnet</span><span className="text-on-surface break-all">{overrides.starknetMainnet || 'https://rpc.starknet.lava.build (default)'}</span></div>
-          <div className="flex gap-2"><span className="text-outline-variant w-40 flex-shrink-0">Starknet sepolia</span><span className="text-on-surface break-all">{overrides.starknetSepolia || 'https://starknet-sepolia.drpc.org (default)'}</span></div>
+          <div className="flex gap-2"><span className="label w-40 flex-shrink-0 mb-0">Version</span><span className="text-on-surface">v{packageJson.version}</span></div>
+          <div className="flex gap-2"><span className="label w-40 flex-shrink-0 mb-0">Starknet mainnet</span><span className="text-on-surface break-all">{overrides.starknetMainnet || 'https://rpc.starknet.lava.build (default)'}</span></div>
+          <div className="flex gap-2"><span className="label w-40 flex-shrink-0 mb-0">Starknet sepolia</span><span className="text-on-surface break-all">{overrides.starknetSepolia || 'https://starknet-sepolia.drpc.org (default)'}</span></div>
         </div>
-      </SectionCard>
+      </Section>
 
     </div>
   );

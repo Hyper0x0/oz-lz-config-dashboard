@@ -32,8 +32,9 @@ function endpointWrite(endpointAddr: string, runner: ContractRunner): IEndpointW
 
 /** ABI-encode a ULN config struct for endpoint.setConfig */
 function encodeULN(params: ULNConfigParams): string {
-  const sorted = [...params.requiredDVNs].sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
-  const optDVNs = params.optionalDVNs ?? [];
+  const sortAddr = (a: string, b: string) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
+  const sorted = [...params.requiredDVNs].sort(sortAddr);
+  const optDVNs = [...(params.optionalDVNs ?? [])].sort(sortAddr);
   const coder = AbiCoder.defaultAbiCoder();
   return coder.encode(
     ['tuple(uint64 confirmations,uint8 requiredDVNCount,uint8 optionalDVNCount,uint8 optionalDVNThreshold,address[] requiredDVNs,address[] optionalDVNs)'],

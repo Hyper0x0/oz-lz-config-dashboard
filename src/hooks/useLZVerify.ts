@@ -232,6 +232,70 @@ function buildChecks(r: Omit<PathwayVerifyResult, 'checks' | 'error'>): VerifyCh
     severity: 'critical',
   });
 
+  // ── B→A direction checks ─────────────────────────────────────────────────
+
+  // B→A send library (remote sends back to home)
+  const remoteSendLibOk = !!r.remoteSendLib && r.remoteSendLib !== ZeroAddress;
+  checks.push({
+    label: 'Send library set (B→A)',
+    passed: remoteSendLibOk,
+    detail: r.remoteSendLib ?? 'Not set on remote',
+    severity: 'critical',
+  });
+
+  // B→A executor
+  const remoteExecOk = !!r.remoteExecutor && r.remoteExecutor.executor !== ZeroAddress;
+  checks.push({
+    label: 'Executor configured (B→A)',
+    passed: remoteExecOk,
+    detail: remoteExecOk
+      ? `${r.remoteExecutor!.executor} (max ${r.remoteExecutor!.maxMessageSize} bytes)`
+      : 'Executor not set on remote — return sends will fail',
+    severity: 'critical',
+  });
+
+  // B→A send DVN
+  const remoteSendDvnOk = !!r.remoteSendDVN && r.remoteSendDVN.requiredDVNCount > 0;
+  checks.push({
+    label: 'DVNs configured (B→A send)',
+    passed: remoteSendDvnOk,
+    detail: remoteSendDvnOk
+      ? `${r.remoteSendDVN!.requiredDVNCount} required: ${r.remoteSendDVN!.requiredDVNs.join(', ')}`
+      : 'No required DVNs on remote send side',
+    severity: 'critical',
+  });
+
+  // B→A receive library (home receives from remote)
+  const homeRecvLibOk = !!r.homeReceiveLib && r.homeReceiveLib !== ZeroAddress;
+  checks.push({
+    label: 'Receive library set (B→A)',
+    passed: homeRecvLibOk && !r.homeReceiveLibIsDefault,
+    detail: homeRecvLibOk
+      ? `${r.homeReceiveLib}${r.homeReceiveLibIsDefault ? ' (default — set explicitly)' : ''}`
+      : 'Not set on home',
+    severity: r.homeReceiveLibIsDefault ? 'warning' : 'critical',
+  });
+
+  // B→A receive DVN
+  const homeRecvDvnOk = !!r.homeReceiveDVN && r.homeReceiveDVN.requiredDVNCount > 0;
+  checks.push({
+    label: 'DVNs configured (B→A receive)',
+    passed: homeRecvDvnOk,
+    detail: homeRecvDvnOk
+      ? `${r.homeReceiveDVN!.requiredDVNCount} required: ${r.homeReceiveDVN!.requiredDVNs.join(', ')}`
+      : 'No required DVNs on home receive side',
+    severity: 'critical',
+  });
+
+  // B→A delegate
+  const remoteDelegateOk = !!r.remoteDelegate && r.remoteDelegate !== ZeroAddress;
+  checks.push({
+    label: 'Delegate set (B→A)',
+    passed: remoteDelegateOk,
+    detail: remoteDelegateOk ? r.remoteDelegate! : 'No delegate on remote',
+    severity: 'warning',
+  });
+
   return checks;
 }
 
@@ -283,20 +347,22 @@ export function useLZVerify() {
       if (!error) error = formatVerifyError(err, p.remoteChain.name);
     }
 
-    // ── Home side reads ─────────────────────────────────────────────────────
+    // ── Home side reads (A→B send + B→A receive) ─────────────────────────
     try {
       await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
         const provider = p.walletProvider ?? new JsonRpcProvider(rpc);
         const homeEp = endpointContract(p.homeChain.endpoint, provider);
         const adapter = new Contract(p.adapterAddr, OFTAdapterABI, provider) as unknown as IOFTAdapter;
 
-        const [sendLib, delegate, homePeer, homeOpts] = await Promise.all([
+        const [sendLib, delegate, homePeer, homeOpts, recvLibResult] = await Promise.all([
           homeEp.getSendLibrary(p.adapterAddr, p.remoteChain.eid),
           homeEp.delegates(p.adapterAddr),
           adapter.peers(p.remoteChain.eid),
           adapter.enforcedOptions(p.remoteChain.eid, SEND_MSG_TYPE),
+          homeEp.getReceiveLibrary(p.adapterAddr, p.remoteChain.eid),
         ]);
 
+        // A→B send side
         partial.homeSendLib = sendLib;
         partial.homeDelegate = delegate;
         partial.homePeer = homePeer;
@@ -311,6 +377,15 @@ export function useLZVerify() {
           partial.homeDVN = decodeUln(ulnRaw);
         }
 
+        // B→A receive side (home receives from remote)
+        const [homeRecvLib, homeRecvLibIsDefault] = recvLibResult;
+        partial.homeReceiveLib = homeRecvLib;
+        partial.homeReceiveLibIsDefault = homeRecvLibIsDefault;
+        if (homeRecvLib && homeRecvLib !== ZeroAddress) {
+          const dvnRaw = await homeEp.getConfig(p.adapterAddr, homeRecvLib, p.remoteChain.eid, CONFIG_TYPE_ULN);
+          partial.homeReceiveDVN = decodeUln(dvnRaw);
+        }
+
         try {
           const rl = await adapter.rateLimits(p.remoteChain.eid);
           partial.homeRateLimit = { limit: rl[2], window: Number(rl[3]) };
@@ -322,19 +397,22 @@ export function useLZVerify() {
       if (!error) error = formatVerifyError(err, p.homeChain.name);
     }
 
-    // ── Remote side reads ───────────────────────────────────────────────────
+    // ── Remote side reads (A→B receive + B→A send) ──────────────────────
     try {
       await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
         const provider = new JsonRpcProvider(rpc);
         const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
         const peer = new Contract(p.peerAddr, OFTABI, provider) as unknown as IOFTPeer;
 
-        const [recvLibResult, remotePeer, remoteOpts] = await Promise.all([
+        const [recvLibResult, remotePeer, remoteOpts, remoteSendLib, remoteDelegate] = await Promise.all([
           remoteEp.getReceiveLibrary(p.peerAddr, p.homeChain.eid),
           peer.peers(p.homeChain.eid),
           peer.enforcedOptions(p.homeChain.eid, SEND_MSG_TYPE),
+          remoteEp.getSendLibrary(p.peerAddr, p.homeChain.eid),
+          remoteEp.delegates(p.peerAddr),
         ]);
 
+        // A→B receive side
         const [recvLib, recvLibIsDefault] = recvLibResult;
         partial.remoteReceiveLib = recvLib;
         partial.remoteReceiveLibIsDefault = recvLibIsDefault;
@@ -344,6 +422,18 @@ export function useLZVerify() {
         if (recvLib && recvLib !== ZeroAddress) {
           const dvnRaw = await remoteEp.getConfig(p.peerAddr, recvLib, p.homeChain.eid, CONFIG_TYPE_ULN);
           partial.remoteDVN = decodeUln(dvnRaw);
+        }
+
+        // B→A send side
+        partial.remoteSendLib = remoteSendLib;
+        partial.remoteDelegate = remoteDelegate;
+        if (remoteSendLib && remoteSendLib !== ZeroAddress) {
+          const [execRaw, ulnRaw] = await Promise.all([
+            remoteEp.getConfig(p.peerAddr, remoteSendLib, p.homeChain.eid, CONFIG_TYPE_EXECUTOR),
+            remoteEp.getConfig(p.peerAddr, remoteSendLib, p.homeChain.eid, CONFIG_TYPE_ULN),
+          ]);
+          partial.remoteExecutor = decodeExecutor(execRaw);
+          partial.remoteSendDVN = decodeUln(ulnRaw);
         }
       });
     } catch (err) {

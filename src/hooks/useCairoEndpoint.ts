@@ -63,18 +63,28 @@ export interface CairoEndpointOps {
 export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOps {
 
   const setEnforcedOptions = useCallback(async (
-    oappAddr: string, remoteEid: number, gasLimit: bigint, rpc: string,
+    oappAddr: string, remoteEid: number, gasLimit: bigint, _rpc: string,
   ): Promise<TxState> => {
     if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
     try {
-      const provider = new RpcProvider({ nodeUrl: rpc });
-      const contract = new Contract(StarknetOFTABI as never[], oappAddr, provider);
-      contract.connect(account);
-
       const options = hexToByteArray(buildLzReceiveOption(gasLimit));
-      const tx = await contract.set_enforced_options([
-        { eid: remoteEid, msg_type: MSG_TYPE_SEND, options },
-      ]);
+      // Manually compile calldata — starknet.js v6 cannot auto-serialize a
+      // ByteArray nested inside a struct, so we flatten it ourselves.
+      const calldata: string[] = [
+        '1',                                   // params array length
+        remoteEid.toString(),                   // EnforcedOptionParam.eid
+        MSG_TYPE_SEND.toString(),               // EnforcedOptionParam.msg_type
+        options.data.length.toString(),          // ByteArray.data length
+        ...options.data,                         // ByteArray.data felts
+        options.pending_word,                    // ByteArray.pending_word
+        options.pending_word_len.toString(),     // ByteArray.pending_word_len
+      ];
+
+      const tx = await account.execute({
+        contractAddress: oappAddr,
+        entrypoint: 'set_enforced_options',
+        calldata,
+      });
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {

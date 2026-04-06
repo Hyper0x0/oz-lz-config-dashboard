@@ -5,8 +5,15 @@ import timelockTarget from '@/config/timelockTarget.json';
 import { useWallet } from '@/context/WalletContext';
 import { useTimelockOps } from '@/hooks/useTimelockOps';
 import { TxStatus } from '@/components/TxStatus';
-import { CONTRACTS, ARB_SEPOLIA, ARBISCAN_API_KEY } from '@/config/chains';
+import { Section } from '@/components/Section';
+import { ChainBadge } from '@/components/ChainBadge';
+import { CONTRACTS, ARBISCAN_API_KEY } from '@/config/chains';
 import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown } from '@/utils/timelock';
+import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
+import OFTABI from '@/abis/evm/OFT.json';
+import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
+import ERC20ABI from '@/abis/evm/ERC20.json';
+import AccessControlABI from '@/abis/evm/AccessControl.json';
 import type { TxState, OperationState } from '@/types';
 
 // ── Parse timelockTarget.json once ───────────────────────────────────────────
@@ -22,6 +29,36 @@ function parseArg(value: string, type: string): unknown {
   if (type === 'bool') return value === 'true' || value === '1';
   if (type.startsWith('uint') || type.startsWith('int')) return BigInt(value || '0');
   return value; // address, bytes*, string
+}
+
+// ── Calldata decoder — tries multiple ABIs ──────────────────────────────────
+const DECODE_IFACES = [
+  { name: 'Target',          iface: TARGET_IFACE },
+  { name: 'TimelockController', iface: new Interface(TimelockControllerABI) },
+  { name: 'OFTAdapter',      iface: new Interface(OFTAdapterABI) },
+  { name: 'OFT',             iface: new Interface(OFTABI) },
+  { name: 'EndpointV2',      iface: new Interface(EndpointV2ABI) },
+  { name: 'ERC20',           iface: new Interface(ERC20ABI) },
+  { name: 'AccessControl',   iface: new Interface(AccessControlABI) },
+];
+
+interface DecodedCall { contract: string; fn: string; args: Record<string, string> }
+
+function decodeCalldata(data: string): DecodedCall | null {
+  if (!data || data === '0x' || data.length < 10) return null;
+  for (const { name, iface } of DECODE_IFACES) {
+    try {
+      const parsed = iface.parseTransaction({ data, value: 0n });
+      if (!parsed) continue;
+      const args: Record<string, string> = {};
+      parsed.fragment.inputs.forEach((input, i) => {
+        const val = parsed.args[i];
+        args[input.name || `arg${i}`] = typeof val === 'bigint' ? val.toString() : String(val);
+      });
+      return { contract: name, fn: parsed.name, args };
+    } catch { /* try next */ }
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,9 +81,28 @@ function StateBadge({ state }: { state: OperationState }): JSX.Element {
   return <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold bg-error/10 text-error border border-error/20">Unset</span>;
 }
 
+const TIMELOCK_CHAINS = [
+  { id: 1,       name: 'Ethereum',         rpc: 'https://eth.llamarpc.com',           explorer: 'etherscan.io' },
+  { id: 42161,   name: 'Arbitrum',          rpc: 'https://arb1.arbitrum.io/rpc',       explorer: 'arbiscan.io' },
+  { id: 421614,  name: 'Arbitrum Sepolia',  rpc: 'https://sepolia-rollup.arbitrum.io/rpc', explorer: 'sepolia.arbiscan.io' },
+  { id: 10,      name: 'Optimism',          rpc: 'https://mainnet.optimism.io',        explorer: 'optimistic.etherscan.io' },
+  { id: 8453,    name: 'Base',              rpc: 'https://mainnet.base.org',           explorer: 'basescan.org' },
+  { id: 84532,   name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',           explorer: 'sepolia.basescan.org' },
+  { id: 137,     name: 'Polygon',           rpc: 'https://polygon-rpc.com',            explorer: 'polygonscan.com' },
+  { id: 56,      name: 'BNB Chain',         rpc: 'https://bsc-dataseed.binance.org',   explorer: 'bscscan.com' },
+  { id: 43114,   name: 'Avalanche',         rpc: 'https://api.avax.network/ext/bc/C/rpc', explorer: 'snowscan.xyz' },
+  { id: 11155111,name: 'Sepolia',           rpc: 'https://rpc.sepolia.org',            explorer: 'sepolia.etherscan.io' },
+];
+
 export function Timelock(): JSX.Element {
   const { evm } = useWallet();
   const ops = useTimelockOps(evm.signer);
+
+  // Chain: auto-detect from wallet, with manual override
+  const walletChain = TIMELOCK_CHAINS.find((c) => c.id === evm.chainId);
+  const [manualChainId, setManualChainId] = useState<number | null>(null);
+  const activeChainId = manualChainId ?? evm.chainId ?? 421614;
+  const selectedChain = TIMELOCK_CHAINS.find((c) => c.id === activeChainId) ?? TIMELOCK_CHAINS[2];
 
   const [timelockAddr, setTimelockAddr] = useState(CONTRACTS.adminGateway ?? '');
   const [minDelay,     setMinDelay]     = useState<string>('');
@@ -173,7 +229,7 @@ export function Timelock(): JSX.Element {
     if (!deriveTxHash) return;
     setDeriving(true); setDeriveError(null);
     try {
-      const provider = evm.provider ?? new JsonRpcProvider(ARB_SEPOLIA.rpc);
+      const provider = evm.provider ?? new JsonRpcProvider(selectedChain.rpc);
       const receipt = await provider.getTransactionReceipt(deriveTxHash);
       if (!receipt) { setDeriveError('Transaction not found'); return; }
       const iface = new Interface(TimelockControllerABI);
@@ -214,7 +270,7 @@ export function Timelock(): JSX.Element {
       const cancelledTopic = iface.getEvent('Cancelled')!.topicHash;
       const saltTopic      = iface.getEvent('CallSalt')!.topicHash;
       const fromBlock = scanFromBlock.trim() || '0';
-      const base = `https://api.etherscan.io/v2/api?chainid=${ARB_SEPOLIA.id}&module=logs&action=getLogs&address=${timelockAddr}&fromBlock=${fromBlock}&toBlock=latest&apikey=${ARBISCAN_API_KEY}`;
+      const base = `https://api.etherscan.io/v2/api?chainid=${selectedChain.id}&module=logs&action=getLogs&address=${timelockAddr}&fromBlock=${fromBlock}&toBlock=latest&apikey=${ARBISCAN_API_KEY}`;
       type ArbLog = { topics: string[]; data: string; transactionHash: string };
       async function fetchLogs(topic0: string): Promise<ArbLog[]> {
         const res = await fetch(`${base}&topic0=${topic0}`);
@@ -270,7 +326,7 @@ export function Timelock(): JSX.Element {
     }
   }
 
-  const arbiscanTx = (hash: string) => `https://sepolia.arbiscan.io/tx/${hash}`;
+  const explorerTx = (hash: string) => `https://${selectedChain.explorer}/tx/${hash}`;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -279,21 +335,39 @@ export function Timelock(): JSX.Element {
       {/* ── Left: main content ── */}
       <div className="col-span-12 lg:col-span-8 space-y-6">
 
-        {/* TimelockController config */}
-        <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-lg">schedule</span>
-            </div>
-            <div>
-              <h3 className="font-headline text-base font-bold text-on-surface">TimelockController</h3>
-              <p className="text-[11px] text-on-surface-variant">Contract address and configuration</p>
+        <Section icon="schedule" title="TimelockController" subtitle="Contract address and configuration">
+          {/* Network indicator */}
+          <div className="flex items-center gap-3 mb-4">
+            {evm.isConnected && walletChain && !manualChainId && (
+              <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
+            )}
+            {!evm.isConnected && (
+              <span className="text-xs text-on-surface-variant">No wallet — select network</span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <select className="input text-xs w-44" value={activeChainId}
+                onChange={(e) => setManualChainId(Number(e.target.value))}>
+                {TIMELOCK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {manualChainId && (
+                <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
+              )}
             </div>
           </div>
+
+          {/* Wrong chain warning */}
+          {evm.isConnected && evm.chainId !== activeChainId && (
+            <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
+              <span>Wallet is on {TIMELOCK_CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, selected is {selectedChain.name}.</span>
+              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet</button>
+              <button className="btn btn-sm" onClick={() => setManualChainId(evm.chainId ?? null)}>Use wallet chain</button>
+            </div>
+          )}
+
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">TimelockController address</div>
-              <input className="input" value={timelockAddr} onChange={(e) => setTimelockAddr(e.target.value)} />
+              <div className="label">TimelockController address</div>
+              <input className="input" value={timelockAddr} onChange={(e) => setTimelockAddr(e.target.value)} placeholder="0x…" spellCheck={false} />
             </div>
             <button className="btn" onClick={loadMinDelay}>Load Min Delay</button>
           </div>
@@ -302,19 +376,10 @@ export function Timelock(): JSX.Element {
               Min delay: <strong className="text-on-surface">{minDelay}</strong>
             </div>
           )}
-        </section>
+        </Section>
 
         {/* Schedule Operation */}
-        <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-lg">add_circle</span>
-            </div>
-            <div>
-              <h3 className="font-headline text-base font-bold text-on-surface">Schedule Operation</h3>
-              <p className="text-[11px] text-on-surface-variant">Encode and schedule a timelock operation</p>
-            </div>
-          </div>
+        <Section icon="add_circle" title="Schedule Operation" subtitle="Encode and schedule a timelock operation">
 
           {WRITE_FUNCTIONS.length === 0 ? (
             <div className="text-xs text-on-surface-variant bg-surface-container rounded-lg p-4 border border-outline-variant/10">
@@ -409,19 +474,10 @@ export function Timelock(): JSX.Element {
             </button>
           </div>
           <div className="mt-3"><TxStatus state={scheduleTx} /></div>
-        </section>
+        </Section>
 
         {/* Check Operation State */}
-        <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-lg">search</span>
-            </div>
-            <div>
-              <h3 className="font-headline text-base font-bold text-on-surface">Check Operation State</h3>
-              <p className="text-[11px] text-on-surface-variant">Lookup operation status by hash</p>
-            </div>
-          </div>
+        <Section icon="search" title="Check Operation State" subtitle="Lookup operation status by hash">
 
           <div className="bg-surface-container rounded-lg p-4 mb-5">
             <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">Derive hash from schedule tx hash</div>
@@ -465,19 +521,36 @@ export function Timelock(): JSX.Element {
                   </div>
                 )}
                 {(opState === 'Waiting' || opState === 'Ready') && (
-                  <button className="btn bg-error/10 text-error border border-error/20 hover:bg-error/20"
+                  <button className="btn btn-danger"
                     onClick={handleCancel} disabled={!evm.isConnected}>Cancel</button>
                 )}
                 {opState === 'Done' && <span className="text-xs text-on-surface-variant">Already executed — nothing to do</span>}
               </div>
-              {derivedCalldata && (
-                <div className="font-mono text-[11px] text-on-surface-variant leading-relaxed">
-                  <div>target: {derivedTarget}</div>
-                  <div>predecessor: {derivedPredecessor}</div>
-                  <div>salt: {derivedSalt ?? '(from form)'}</div>
-                  <div>calldata: {derivedCalldata.slice(0, 18)}…</div>
-                </div>
-              )}
+              {derivedCalldata && (() => {
+                const decoded = decodeCalldata(derivedCalldata);
+                return (
+                  <div className="text-[11px] leading-relaxed">
+                    {decoded && (
+                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2">
+                        <div className="label mb-1">Decoded</div>
+                        <div className="text-primary font-semibold font-mono">{decoded.fn}()</div>
+                        <div className="text-[10px] text-on-surface-variant mb-1">{decoded.contract}</div>
+                        {Object.entries(decoded.args).map(([k, v]) => (
+                          <div key={k} className="font-mono text-on-surface-variant">
+                            <span className="text-on-surface">{k}</span>: {v}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="font-mono text-on-surface-variant">
+                      <div>target: {derivedTarget}</div>
+                      <div>predecessor: {derivedPredecessor}</div>
+                      <div>salt: {derivedSalt ?? '(from form)'}</div>
+                      {!decoded && <div>calldata: {derivedCalldata.slice(0, 18)}…</div>}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
           {(executeTx.status !== 'idle' || cancelTx.status !== 'idle') && (
@@ -485,28 +558,20 @@ export function Timelock(): JSX.Element {
               <TxStatus state={executeTx.status !== 'idle' ? executeTx : cancelTx} />
             </div>
           )}
-        </section>
+        </Section>
       </div>
 
       {/* ── Right: active operations sidebar ── */}
       <div className="col-span-12 lg:col-span-4">
-        <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 sticky top-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-lg">list_alt</span>
-            </div>
-            <div className="flex-1">
-              <h3 className="font-headline text-base font-bold text-on-surface">Active Operations</h3>
-              <p className="text-[11px] text-on-surface-variant">Pending &amp; ready ops</p>
-            </div>
-            <button className="btn text-[11px] py-1 px-3"
-              onClick={handleScan} disabled={scanning || !timelockAddr}>
+        <Section icon="list_alt" title="Active Operations" subtitle="Pending &amp; ready ops"
+          actions={
+            <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !timelockAddr}>
               {scanning ? '…' : 'Scan'}
             </button>
-          </div>
-
+          }>
           <div className="mb-4">
-            <input className="input text-[11px]" placeholder="From block"
+            <div className="label">From block</div>
+            <input className="input" placeholder="Leave empty for auto"
               value={scanFromBlock} onChange={(e) => setScanFromBlock(e.target.value)} />
           </div>
 
@@ -516,17 +581,48 @@ export function Timelock(): JSX.Element {
           )}
           {scanning && <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Scanning…</div>}
 
-          <div className="flex flex-col gap-3">
-            {scannedOps.map((op) => (
-              <div key={op.id} className="bg-surface-container rounded-lg p-3 border border-outline-variant/10">
-                <div className="flex items-center justify-between mb-2">
-                  <StateBadge state={op.state} />
-                  <div className="flex gap-2">
-                    <a href={arbiscanTx(op.txHash)} target="_blank" rel="noreferrer"
-                      className="text-[10px] text-primary border border-primary/20 rounded px-1.5 py-0.5 hover:bg-primary/5 transition-colors no-underline">
-                      ↗ Scan
-                    </a>
-                    <button className="btn text-[10px] py-0.5 px-2"
+          <div className="space-y-2">
+            {scannedOps.map((op) => {
+              const decoded = decodeCalldata(op.data);
+              return (
+                <div key={op.id} className="bg-surface-container rounded-lg border border-outline-variant/10 overflow-hidden">
+                  {/* Header: decoded function name or raw hash */}
+                  <div className="px-3 pt-3 pb-2">
+                    {decoded ? (
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-mono text-xs text-primary font-semibold">{decoded.fn}()</span>
+                        <span className="text-[9px] text-on-surface-variant bg-surface-container-high px-1.5 py-0.5 rounded">{decoded.contract}</span>
+                      </div>
+                    ) : (
+                      <div className="font-mono text-[11px] text-on-surface mb-1">{op.data.slice(0, 10)}</div>
+                    )}
+                    <div className="font-mono text-[10px] text-on-surface-variant opacity-60">
+                      {op.id.slice(0, 14)}…{op.id.slice(-6)}
+                    </div>
+                    {op.eta && <div className="text-[10px] text-tertiary mt-1">{op.eta}</div>}
+                  </div>
+
+                  {/* Decoded args preview */}
+                  {decoded && Object.keys(decoded.args).length > 0 && (
+                    <div className="px-3 pb-2">
+                      {Object.entries(decoded.args).slice(0, 3).map(([k, v]) => (
+                        <div key={k} className="font-mono text-[10px] text-on-surface-variant truncate">
+                          <span className="text-on-surface">{k}</span>: {v.length > 20 ? v.slice(0, 20) + '…' : v}
+                        </div>
+                      ))}
+                      {Object.keys(decoded.args).length > 3 && (
+                        <div className="text-[10px] text-on-surface-variant opacity-50">+{Object.keys(decoded.args).length - 3} more</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Footer: status + actions */}
+                  <div className="flex items-center gap-2 px-3 py-2 border-t border-outline-variant/10 bg-surface/50">
+                    <StateBadge state={op.state} />
+                    <div className="flex-1" />
+                    <a href={explorerTx(op.txHash)} target="_blank" rel="noreferrer"
+                      className="btn btn-sm btn-ghost text-[10px]">↗ Explorer</a>
+                    <button className="btn btn-sm"
                       onClick={() => {
                         setLookupHash(op.id);
                         setDerivedTarget(op.target);
@@ -538,15 +634,140 @@ export function Timelock(): JSX.Element {
                       }}>Load</button>
                   </div>
                 </div>
-                {op.eta && <div className="text-[10px] text-on-surface-variant mb-1">{op.eta}</div>}
-                <div className="font-mono text-[10px] text-primary">{op.id.slice(0, 10)}…{op.id.slice(-6)}</div>
-                <div className="font-mono text-[10px] text-on-surface-variant mt-1 opacity-60">{op.target.slice(0, 10)}…{op.target.slice(-6)}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
+        </Section>
       </div>
 
     </div>
+  );
+}
+
+// ── Role Management Component ──────────────────────────────────────────────
+
+const ROLE_NAMES = ['PROPOSER', 'EXECUTOR', 'CANCELLER', 'ADMIN'] as const;
+type RoleName = typeof ROLE_NAMES[number];
+const ROLE_COLORS: Record<RoleName, string> = {
+  PROPOSER: 'bg-primary/10 text-primary border-primary/20',
+  EXECUTOR: 'bg-secondary/10 text-secondary border-secondary/20',
+  CANCELLER: 'bg-error/10 text-error border-error/20',
+  ADMIN: 'bg-tertiary/10 text-tertiary border-tertiary/20',
+};
+
+function RoleManagement({ timelockAddr, ops, evm }: {
+  timelockAddr: string;
+  ops: ReturnType<typeof useTimelockOps>;
+  evm: { isConnected: boolean; address: string | null; provider: import('ethers').BrowserProvider | null };
+}): JSX.Element {
+  const [walletRoles, setWalletRoles] = useState<Record<RoleName, boolean> | null>(null);
+  const [roleHashes, setRoleHashes] = useState<Record<string, string> | null>(null);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
+
+  // Grant/revoke state
+  const [grantRoleName, setGrantRoleName] = useState<RoleName>('PROPOSER');
+  const [grantAddr, setGrantAddr] = useState('');
+  const [grantTx, setGrantTx] = useState<TxState>({ status: 'idle' });
+  const [revokeMode, setRevokeMode] = useState(false);
+
+  async function handleLoadRoles() {
+    if (!timelockAddr || !evm.address) return;
+    setLoadingRoles(true);
+    setRoleError(null);
+    try {
+      const [roles, hashes] = await Promise.all([
+        ops.checkRoles(timelockAddr, evm.address, evm.provider ?? undefined),
+        ops.getRoleHashes(timelockAddr, evm.provider ?? undefined),
+      ]);
+      setWalletRoles({
+        PROPOSER: roles.proposer,
+        EXECUTOR: roles.executor,
+        CANCELLER: roles.canceller,
+        ADMIN: roles.admin,
+      });
+      setRoleHashes(hashes);
+    } catch (e) {
+      setRoleError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingRoles(false);
+    }
+  }
+
+  async function handleGrantOrRevoke() {
+    if (!timelockAddr || !roleHashes || !grantAddr) return;
+    const roleKey = grantRoleName.toLowerCase() as 'proposer' | 'executor' | 'canceller' | 'admin';
+    const hash = roleHashes[roleKey];
+    if (!hash) return;
+    setGrantTx({ status: 'pending' });
+    const result = revokeMode
+      ? await ops.revokeRole(timelockAddr, hash, grantAddr)
+      : await ops.grantRole(timelockAddr, hash, grantAddr);
+    setGrantTx(result);
+    if (result.status === 'success') void handleLoadRoles();
+  }
+
+  return (
+    <Section icon="admin_panel_settings" title="Role Management" subtitle="Check and manage Timelock roles"
+      actions={
+        <button className="btn btn-sm" onClick={handleLoadRoles}
+          disabled={loadingRoles || !timelockAddr || !evm.isConnected}>
+          {loadingRoles ? 'Loading…' : 'Check Roles'}
+        </button>
+      }>
+      {roleError && <div className="text-xs text-error mb-3">{roleError}</div>}
+
+      {!evm.isConnected && (
+        <div className="text-xs text-on-surface-variant opacity-60">Connect wallet to check roles</div>
+      )}
+
+      {walletRoles && (
+        <>
+          <div className="flex gap-2 flex-wrap mb-4">
+            {ROLE_NAMES.map((role) => (
+              <span key={role} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold border ${walletRoles[role] ? ROLE_COLORS[role] : 'bg-surface-container text-on-surface-variant/40 border-outline-variant/10'}`}>
+                {walletRoles[role] ? '✓' : '✗'} {role}
+              </span>
+            ))}
+          </div>
+          <div className="text-[11px] text-on-surface-variant mb-4">
+            You can: {[
+              walletRoles.PROPOSER && 'schedule',
+              walletRoles.EXECUTOR && 'execute',
+              walletRoles.CANCELLER && 'cancel',
+              walletRoles.ADMIN && 'grant/revoke roles',
+            ].filter(Boolean).join(', ') || 'nothing (no roles)'}
+          </div>
+
+          {walletRoles.ADMIN && (
+            <div className="bg-surface-container rounded-lg p-4 border border-outline-variant/10">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">
+                {revokeMode ? 'Revoke' : 'Grant'} role
+              </div>
+              <div className="flex gap-2 items-end flex-wrap">
+                <div>
+                  <select className="input text-xs" value={grantRoleName} onChange={(e) => setGrantRoleName(e.target.value as RoleName)}>
+                    {ROLE_NAMES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <input className="input" placeholder="Account address (0x…)" value={grantAddr}
+                    onChange={(e) => setGrantAddr(e.target.value)} spellCheck={false} />
+                </div>
+                <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
+                  disabled={!grantAddr || grantTx.status === 'pending'}
+                  onClick={handleGrantOrRevoke}>
+                  {revokeMode ? 'Revoke' : 'Grant'}
+                </button>
+                <button className="btn btn-sm" onClick={() => setRevokeMode((v) => !v)}>
+                  {revokeMode ? 'Switch to Grant' : 'Switch to Revoke'}
+                </button>
+              </div>
+              <div className="mt-2"><TxStatus state={grantTx} /></div>
+            </div>
+          )}
+        </>
+      )}
+    </Section>
   );
 }

@@ -76,5 +76,60 @@
     ],
     "outputs": [],
     "state_mutability": "external"
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::oapps::oft::oft::SendParam",
+    "members": [
+      { "name": "dst_eid",       "type": "core::integer::u32" },
+      { "name": "to",            "type": "lz_utils::bytes::Bytes32" },
+      { "name": "amount_ld",     "type": "core::integer::u256" },
+      { "name": "min_amount_ld", "type": "core::integer::u256" },
+      { "name": "extra_options", "type": "core::byte_array::ByteArray" },
+      { "name": "compose_msg",   "type": "core::byte_array::ByteArray" },
+      { "name": "oft_cmd",       "type": "core::byte_array::ByteArray" }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "layerzero::oapps::oft::oft::MessagingFee",
+    "members": [
+      { "name": "native_fee",   "type": "core::integer::u256" },
+      { "name": "lz_token_fee", "type": "core::integer::u256" }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "quote_send",
+    "inputs": [
+      { "name": "send_param",      "type": "layerzero::oapps::oft::oft::SendParam" },
+      { "name": "pay_in_lz_token", "type": "core::bool" }
+    ],
+    "outputs": [
+      { "type": "layerzero::oapps::oft::oft::MessagingFee" }
+    ],
+    "state_mutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "send",
+    "inputs": [
+      { "name": "send_param",     "type": "layerzero::oapps::oft::oft::SendParam" },
+      { "name": "fee",            "type": "layerzero::oapps::oft::oft::MessagingFee" },
+      { "name": "refund_address", "type": "core::starknet::contract_address::ContractAddress" }
+    ],
+    "outputs": [],
+    "state_mutability": "external"
+  },
+  {
+    "type": "function",
+    "name": "balance_of",
+    "inputs": [
+      { "name": "account", "type": "core::starknet::contract_address::ContractAddress" }
+    ],
+    "outputs": [
+      { "type": "core::integer::u256" }
+    ],
+    "state_mutability": "view"
   }
 ]

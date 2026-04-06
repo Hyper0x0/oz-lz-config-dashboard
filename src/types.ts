@@ -107,6 +107,16 @@ export interface ITimelockController {
   schedule(target: string, value: bigint, data: string, predecessor: string, salt: string, delay: bigint): Promise<ContractTransactionResponse>;
   execute(target: string, value: bigint, payload: string, predecessor: string, salt: string): Promise<ContractTransactionResponse>;
   cancel(id: string): Promise<ContractTransactionResponse>;
+  // Role management
+  PROPOSER_ROLE(): Promise<string>;
+  EXECUTOR_ROLE(): Promise<string>;
+  CANCELLER_ROLE(): Promise<string>;
+  DEFAULT_ADMIN_ROLE(): Promise<string>;
+  hasRole(role: string, account: string): Promise<boolean>;
+  grantRole(role: string, account: string): Promise<ContractTransactionResponse>;
+  revokeRole(role: string, account: string): Promise<ContractTransactionResponse>;
+  renounceRole(role: string, callerConfirmation: string): Promise<ContractTransactionResponse>;
+  getRoleAdmin(role: string): Promise<string>;
 }
 
 // ── LZ Verification ───────────────────────────────────────────────────────────
@@ -134,7 +144,7 @@ export interface VerifyCheck {
 }
 
 export interface PathwayVerifyResult {
-  /** Chain A → Chain B */
+  /** A→B send side (home) */
   homeSendLib: string | null;
   homeExecutor: ExecutorConfig | null;
   homeDVN: UlnConfig | null;
@@ -143,17 +153,27 @@ export interface PathwayVerifyResult {
   homeEnforcedOptions: string | null;
   homeRateLimit?: { limit: bigint; window: number } | null;
 
-  /** Whether the home endpoint recognises the remote EID */
-  remoteEidSupported: boolean;
-  /** Whether the remote endpoint recognises the home EID */
-  homeEidSupported: boolean;
-
-  /** Chain B receive config */
+  /** A→B receive side (remote) */
   remoteReceiveLib: string | null;
   remoteReceiveLibIsDefault: boolean;
   remoteDVN: UlnConfig | null;
   remotePeer: string | null;
   remoteEnforcedOptions: string | null;
+
+  /** B→A send side (remote) */
+  remoteSendLib: string | null;
+  remoteExecutor: ExecutorConfig | null;
+  remoteSendDVN: UlnConfig | null;
+  remoteDelegate: string | null;
+
+  /** B→A receive side (home) */
+  homeReceiveLib: string | null;
+  homeReceiveLibIsDefault: boolean;
+  homeReceiveDVN: UlnConfig | null;
+
+  /** EID support */
+  remoteEidSupported: boolean;
+  homeEidSupported: boolean;
 
   checks: VerifyCheck[];
   error: string | null;

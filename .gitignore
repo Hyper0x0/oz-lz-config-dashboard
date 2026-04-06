@@ -4,5 +4,8 @@ dist/
 .env.local
 .env*.local
 
+# TypeScript compiler output (Vite handles transpilation)
+src/**/*.js
+
 # task tracking (local only)
 tasks/

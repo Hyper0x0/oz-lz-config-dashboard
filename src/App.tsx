@@ -2,12 +2,13 @@ import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router
 import packageJson from '../package.json';
 import { OFTWiring } from '@/pages/OFTWiring';
 import { Timelock } from '@/pages/Timelock';
+import { Roles } from '@/pages/Roles';
 import { Settings } from '@/pages/Settings';
 import { WalletProvider, useWallet } from '@/context/WalletContext';
 
 function Sidebar(): JSX.Element {
   return (
-    <aside className="fixed left-0 top-0 flex flex-col h-screen w-64 flex-shrink-0 bg-[#060e20] border-r border-outline-variant/15 z-50">
+    <aside className="fixed left-0 top-0 flex flex-col h-screen w-64 flex-shrink-0 bg-surface border-r border-outline-variant/15 z-50">
       <div className="flex flex-col h-full py-6 px-4">
         <div className="mb-8 px-2">
           <div className="text-lg font-bold tracking-tighter text-primary font-headline">OZLZ - Configurator</div>
@@ -22,6 +23,12 @@ function Sidebar(): JSX.Element {
             : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
             <span className="material-symbols-outlined text-lg">security</span>
             TimeLock
+          </NavLink>
+          <NavLink to="/roles" className={({ isActive }) => isActive
+            ? 'flex items-center gap-3 px-4 py-2 rounded bg-surface-container-highest text-primary font-bold border-r-2 border-primary'
+            : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
+            <span className="material-symbols-outlined text-lg">shield_person</span>
+            Roles
           </NavLink>
           <div className="pt-4 pb-2 px-2">
             <span className="text-[10px] uppercase tracking-[0.2em] text-outline-variant font-bold">LayerZero</span>
@@ -83,6 +90,7 @@ function HeaderWallets(): JSX.Element {
 
 function PageTitle(): JSX.Element {
   const loc = useLocation();
+  if (loc.pathname === '/roles') return <><span className="text-on-surface-variant font-normal">OpenZeppelin /</span> <span className="text-primary">Roles</span></>;
   if (loc.pathname === '/wiring') return <><span className="text-on-surface-variant font-normal">LayerZero /</span> <span className="text-primary">OFT Config</span></>;
   if (loc.pathname === '/settings') return <><span className="text-on-surface-variant font-normal">System /</span> <span className="text-primary">Settings</span></>;
   return <><span className="text-on-surface-variant font-normal">OpenZeppelin /</span> <span className="text-primary">TimeLock</span></>;
@@ -90,7 +98,7 @@ function PageTitle(): JSX.Element {
 
 function TopBar(): JSX.Element {
   return (
-    <header className="fixed top-0 right-0 left-64 h-16 flex items-center justify-between px-8 z-40 bg-[#091328]/80 backdrop-blur-xl border-b border-outline-variant/15">
+    <header className="fixed top-0 right-0 left-64 h-16 flex items-center justify-between px-8 z-40 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/15">
       <h1 className="font-headline text-base font-bold tracking-tight text-on-surface">
         <PageTitle />
       </h1>
@@ -101,7 +109,7 @@ function TopBar(): JSX.Element {
 
 function Footer(): JSX.Element {
   return (
-    <footer className="fixed bottom-0 right-0 left-64 px-8 flex items-center gap-4 border-t border-outline-variant/10 h-10 bg-[#060e20] z-50">
+    <footer className="fixed bottom-0 right-0 left-64 px-8 flex items-center gap-4 border-t border-outline-variant/10 h-10 bg-surface z-50">
       <span className="font-mono text-[10px] uppercase tracking-widest text-outline-variant">v{packageJson.version}</span>
     </footer>
   );
@@ -116,6 +124,7 @@ function AppShell(): JSX.Element {
         <div className="p-8">
           <Routes>
             <Route path="/"         element={<Timelock />} />
+            <Route path="/roles"    element={<Roles />} />
             <Route path="/wiring"   element={<OFTWiring />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

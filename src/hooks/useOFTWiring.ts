@@ -22,6 +22,16 @@ interface OFTWiring {
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
   setRateLimit: (adapterAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
   setDelegate: (contractAddr: string, delegate: string) => Promise<TxState>;
+  /** Detect whether an EVM address is an OFTAdapter (token() !== self) or OFT (token() === self). */
+  detectOFTType: (addr: string, rpc: string) => Promise<'adapter' | 'oft'>;
+  /** Quote the LZ fee for a send */
+  quoteSend: (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
+  /** Execute an OFT cross-chain send (EVM). For adapters, approve first. */
+  evmSend: (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint, fee: { nativeFee: bigint; lzTokenFee: bigint }) => Promise<TxState>;
+  /** Approve ERC20 tokens for the OFTAdapter lockbox */
+  approveToken: (tokenAddr: string, spender: string, amount: bigint) => Promise<TxState>;
+  /** Read ERC20 balance + allowance for the connected wallet */
+  readTokenBalance: (tokenAddr: string, owner: string, spender: string) => Promise<{ balance: bigint; allowance: bigint; decimals: number }>;
   /** TODO: implement when Cairo OFT contracts are deployed. */
   setCairoPeer: (cairoOftAddr: string, adapterEid: number, adapterEvmAddr: string) => Promise<TxState>;
 }
@@ -217,6 +227,75 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     [evmSigner],
   );
 
+  const detectOFTType = useCallback(
+    async (addr: string, rpc: string): Promise<'adapter' | 'oft'> => {
+      const provider = new JsonRpcProvider(rpc);
+      const c = adapterContract(addr, provider);
+      const tokenAddr = await c.token();
+      return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';
+    },
+    [],
+  );
+
+  // ── Send / Transfer ────────────────────────────────────────────────────────
+
+  const quoteSend = useCallback(
+    async (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint) => {
+      if (!evmSigner) throw new Error('Wallet not connected');
+      const c = new Contract(oftAddr, OFTABI, evmSigner);
+      const sendParam = { dstEid, to: toBytes32, amountLD, minAmountLD, extraOptions: '0x', composeMsg: '0x', oftCmd: '0x' };
+      const fee = await c.quoteSend(sendParam, false);
+      return { nativeFee: fee.nativeFee as bigint, lzTokenFee: fee.lzTokenFee as bigint };
+    },
+    [evmSigner],
+  );
+
+  const evmSend = useCallback(
+    async (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint, fee: { nativeFee: bigint; lzTokenFee: bigint }): Promise<TxState> => {
+      if (!evmSigner) return { status: 'error', message: 'Wallet not connected' };
+      try {
+        const c = new Contract(oftAddr, OFTABI, evmSigner);
+        const sendParam = { dstEid, to: toBytes32, amountLD, minAmountLD, extraOptions: '0x', composeMsg: '0x', oftCmd: '0x' };
+        const refundAddr = await evmSigner.getAddress();
+        const tx = await c.send(sendParam, fee, refundAddr, { value: fee.nativeFee });
+        await tx.wait();
+        return { status: 'success', hash: tx.hash };
+      } catch (err) {
+        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+      }
+    },
+    [evmSigner],
+  );
+
+  const approveToken = useCallback(
+    async (tokenAddr: string, spender: string, amount: bigint): Promise<TxState> => {
+      if (!evmSigner) return { status: 'error', message: 'Wallet not connected' };
+      try {
+        const c = new Contract(tokenAddr, ERC20ABI, evmSigner);
+        const tx = await c.approve(spender, amount);
+        await tx.wait();
+        return { status: 'success', hash: tx.hash };
+      } catch (err) {
+        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+      }
+    },
+    [evmSigner],
+  );
+
+  const readTokenBalance = useCallback(
+    async (tokenAddr: string, owner: string, spender: string) => {
+      if (!evmSigner) throw new Error('Wallet not connected');
+      const c = new Contract(tokenAddr, ERC20ABI, evmSigner);
+      const [balance, allowance, decimals] = await Promise.all([
+        c.balanceOf(owner) as Promise<bigint>,
+        c.allowance(owner, spender) as Promise<bigint>,
+        c.decimals() as Promise<bigint>,
+      ]);
+      return { balance, allowance, decimals: Number(decimals) };
+    },
+    [evmSigner],
+  );
+
   // ── Cairo side (scaffold) ─────────────────────────────────────────────────
 
   const setCairoPeer = useCallback(
@@ -241,6 +320,11 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     setEvmEnforcedOptions,
     setRateLimit,
     setDelegate,
+    detectOFTType,
+    quoteSend,
+    evmSend,
+    approveToken,
+    readTokenBalance,
     setCairoPeer,
   };
 }

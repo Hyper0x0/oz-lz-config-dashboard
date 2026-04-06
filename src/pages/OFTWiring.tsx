@@ -9,14 +9,14 @@ import { useDVNCatalog } from '@/hooks/useDVNCatalog';
 import { useEvmWallet } from '@/hooks/useEvmWallet';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { TxStatus } from '@/components/TxStatus';
-import { GuidedConfigure } from '@/components/GuidedConfigure';
+import { Section } from '@/components/Section';
+import { ConfigureFlow } from '@/components/configure/ConfigureFlow';
 import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
-import type { PathwayVerifyResult, TokenInfo, TxState, PeerEntry, DVNProvider } from '@/types';
-import { sortDvns } from '@/utils/cairoLzConfig';
+import type { PathwayVerifyResult, TokenInfo, TxState, PeerEntry } from '@/types';
 
-type Tab = 'verify' | 'configure';
+type Tab = 'verify' | 'configure' | 'send';
 type WiringMode = 'bridge-oft' | 'oft-oft';
 
 /** Returns false for '', '0x', or any string that would throw BigInt(). */
@@ -56,8 +56,11 @@ export function OFTWiring(): JSX.Element {
   const home: AnyChain = homeChain ?? toAnyEvm(defaultEvm0);
   const remote: AnyChain = remoteChain ?? toAnyEvm(defaultEvm1);
 
-  // Wiring mode
+  // Wiring mode — auto-detected from contract
   const [mode, setMode] = useState<WiringMode>('bridge-oft');
+  const [detectedHome, setDetectedHome] = useState<'adapter' | 'oft' | null>(null);
+  const [detectedRemote, setDetectedRemote] = useState<'adapter' | 'oft' | null>(null);
+  const [detecting, setDetecting] = useState(false);
 
   // Contract addresses
   const [homeAddr, setHomeAddr] = useState(CONTRACTS.adapter);
@@ -87,6 +90,38 @@ export function OFTWiring(): JSX.Element {
   const starkHome = isStarknet(home) ? home : null;
   const canScanPeers = !!homeAddr && homeAddr !== '0x' && (!!evmHome || !!starkHome);
 
+  // Auto-detect Adapter vs OFT from BOTH addresses
+  const detectTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    setDetectedHome(null);
+    setDetectedRemote(null);
+    const homeValid = evmHome && isAddr(homeAddr);
+    const remoteValid = evmRemote && isAddr(remoteAddr);
+    if (!homeValid && !remoteValid) return;
+    clearTimeout(detectTimer.current);
+    setDetecting(true);
+    detectTimer.current = setTimeout(async () => {
+      try {
+        const results = await Promise.allSettled([
+          homeValid ? wiring.detectOFTType(homeAddr, evmHome!.rpc) : Promise.resolve(null),
+          remoteValid ? wiring.detectOFTType(remoteAddr, evmRemote!.rpc) : Promise.resolve(null),
+        ]);
+        const homeType = results[0].status === 'fulfilled' ? results[0].value : null;
+        const remoteType = results[1].status === 'fulfilled' ? results[1].value : null;
+        setDetectedHome(homeType);
+        setDetectedRemote(remoteType);
+        // Set mode based on home detection
+        if (homeType) setMode(homeType === 'adapter' ? 'bridge-oft' : 'oft-oft');
+      } catch {
+        setDetectedHome(null);
+        setDetectedRemote(null);
+      } finally {
+        setDetecting(false);
+      }
+    }, 800);
+    return () => clearTimeout(detectTimer.current);
+  }, [homeAddr, remoteAddr, evmHome?.rpc, evmRemote?.rpc]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function handleScanPeers(): Promise<void> {
     if (!canScanPeers) return;
     setPeersScanning(true);
@@ -114,7 +149,8 @@ export function OFTWiring(): JSX.Element {
     setPeersScanning(false);
   }
 
-  const homeLabel = mode === 'bridge-oft' ? 'Adapter' : 'OFT';
+  const homeLabel = detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : (mode === 'bridge-oft' ? 'Adapter' : 'OFT');
+  const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
 
   function clearData() {
     setVerifyResult(null);
@@ -136,20 +172,20 @@ export function OFTWiring(): JSX.Element {
 
   async function handleFetch(): Promise<void> {
     setFetching(true);
-    clearData();
+    setTokenInfo(null);
+    setTokenInfoError(null);
 
     if (bothEvm && evmHome && evmRemote) {
-      // Full EVM↔EVM fetch: token info + verify
-      const wp = walletProviderForHome();
-      const [tokenResult, verifyRes] = await Promise.allSettled([
-        wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp),
-        verify({ adapterAddr: homeAddr, peerAddr: remoteAddr, homeChain: evmHome, remoteChain: evmRemote, walletProvider: wp }),
-      ]);
-      if (tokenResult.status === 'fulfilled') setTokenInfo(tokenResult.value);
-      else setTokenInfoError('Could not read token names: ' + (tokenResult.reason instanceof Error ? tokenResult.reason.message : String(tokenResult.reason)));
-      if (verifyRes.status === 'fulfilled') setVerifyResult(verifyRes.value);
+      // Fetch only token name/symbol — verify runs separately via auto-debounce
+      try {
+        const wp = walletProviderForHome();
+        const info = await wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp);
+        setTokenInfo(info);
+      } catch (e) {
+        setTokenInfoError('Could not read token names: ' + (e instanceof Error ? e.message : String(e)));
+      }
     } else if (hasStarknet) {
-      // Starknet combination: trigger peer checks in StarknetVerifyPanel
+      // Starknet: trigger verify in StarknetVerifyPanel
       setTab('verify');
       setStarkFetchTick((t) => t + 1);
     }
@@ -165,16 +201,6 @@ export function OFTWiring(): JSX.Element {
     setVerifyResult(result);
     setVerifying(false);
   }
-
-  // Auto-run EVM verify (debounced) when addresses or chains change
-  const autoVerifyTimer = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    if (!bothEvm || !isAddr(homeAddr) || !isAddr(remoteAddr)) return;
-    clearTimeout(autoVerifyTimer.current);
-    autoVerifyTimer.current = setTimeout(() => { void handleVerify(); }, 1500);
-    return () => clearTimeout(autoVerifyTimer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeAddr, remoteAddr, home.eid, remote.eid, bothEvm]);
 
   return (
     <div className="grid grid-cols-12 gap-6">
@@ -197,42 +223,77 @@ export function OFTWiring(): JSX.Element {
           {/* Network toggle + wiring mode */}
           <div className="flex gap-2 items-center mb-5 flex-wrap">
             <button
-              className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${isTestnet ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+              className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
               onClick={() => handleNetworkToggle(true)}>Testnet</button>
             <button
-              className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${!isTestnet ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+              className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
               onClick={() => handleNetworkToggle(false)}>Mainnet</button>
             {chainsLoading && <span className="text-xs text-on-surface-variant">Loading chains…</span>}
             {!chainsLoading && <span className="text-xs text-on-surface-variant">{evmChains.length} EVM + 1 Starknet</span>}
             <div className="ml-auto flex gap-2 items-center">
-              <span className="text-xs text-on-surface-variant">Wire:</span>
-              <button
-                className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'bridge-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
-                onClick={() => setMode('bridge-oft')}>Adapter ↔ OFT</button>
-              <button
-                className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'oft-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
-                onClick={() => setMode('oft-oft')}>OFT ↔ OFT</button>
+              {detecting && <span className="text-[11px] text-on-surface-variant animate-pulse">Detecting type…</span>}
+              {!detecting && (detectedHome || detectedRemote) && (
+                <div className="flex gap-1.5 items-center">
+                  {detectedHome && (
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                      Home: {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
+                    </span>
+                  )}
+                  {detectedRemote && (
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedRemote === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                      Remote: {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
+                    </span>
+                  )}
+                </div>
+              )}
+              {!detecting && !detectedHome && !detectedRemote && (
+                <>
+                  <span className="text-xs text-on-surface-variant">Type:</span>
+                  <button
+                    className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'bridge-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                    onClick={() => setMode('bridge-oft')}>Adapter</button>
+                  <button
+                    className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'oft-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                    onClick={() => setMode('oft-oft')}>OFT</button>
+                </>
+              )}
             </div>
           </div>
 
           {/* Chain selectors */}
-          <div className="form-grid">
-            <div>
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
               <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} chain (home) — EID {home.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
+                disabledEid={remote.eid}
                 onSelect={(c) => { setHomeChain(c); clearData(); setTab('verify'); }} />
             </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">OFT chain (remote) — EID {remote.eid}</div>
+            <button className="btn btn-sm mb-0.5 flex-shrink-0" title="Swap home ↔ remote"
+              onClick={() => {
+                setHomeChain(remoteChain ?? remote);
+                setRemoteChain(homeChain ?? home);
+                const tmpAddr = homeAddr;
+                setHomeAddr(remoteAddr);
+                setRemoteAddr(tmpAddr);
+                clearData();
+              }}>⇄</button>
+            <div className="flex-1">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} chain (remote) — EID {remote.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
+                disabledEid={home.eid}
                 onSelect={(c) => { setRemoteChain(c); clearData(); setTab('verify'); }} />
             </div>
           </div>
 
           {/* Address inputs */}
-          <div className="form-grid mt-3">
-            <Field label={`${homeLabel} address (home)`} value={homeAddr} onChange={setHomeAddr} />
-            <Field label="OFT address (remote)" value={remoteAddr} onChange={setRemoteAddr} />
+          <div className="flex gap-3 items-end mt-3">
+            <div className="flex-1">
+              <Field label={`${homeLabel} address (home)`} value={homeAddr} onChange={setHomeAddr} />
+            </div>
+            <div className="w-[34px] flex-shrink-0" /> {/* spacer aligned with swap button above */}
+            <div className="flex-1">
+              <Field label={`${remoteLabel} address (remote)`} value={remoteAddr} onChange={setRemoteAddr} />
+            </div>
           </div>
 
           {/* Fetch + wallet hints */}
@@ -243,17 +304,22 @@ export function OFTWiring(): JSX.Element {
                 onClick={handleFetch}
                 disabled={fetching || !homeAddr || !remoteAddr}
               >
-                {fetching ? 'Fetching…' : 'Fetch data'}
+                {fetching ? 'Fetching…' : 'Fetch Token Info'}
               </button>
             )}
             {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
-              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>EVM wallet on {evmHome.name}</span>
+              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmHome.name}</span>
             )}
             {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
-              <span className="text-xs text-on-surface-variant">Using public RPC — switch wallet to {evmHome.name} to configure</span>
+              <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmHome.chainId)}>
+                Switch wallet to {evmHome.name}
+              </button>
+            )}
+            {evmHome && !evm.isConnected && (
+              <span className="text-xs text-on-surface-variant">Connect EVM wallet to configure (reads use public RPC)</span>
             )}
             {hasStarknet && stark.isConnected && (
-              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Starknet wallet connected</span>
+              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Starknet connected</span>
             )}
             {hasStarknet && !stark.isConnected && (
               <span className="text-xs text-on-surface-variant">Connect Starknet wallet to configure</span>
@@ -277,12 +343,12 @@ export function OFTWiring(): JSX.Element {
         {(bothEvm || hasStarknet) && (
           <>
             <div className="flex gap-2 mb-1">
-              <button
-                className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${tab === 'verify' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+              <button className={`tab-btn ${tab === 'verify' ? 'tab-btn-active' : ''}`}
                 onClick={() => setTab('verify')}>Verify</button>
-              <button
-                className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${tab === 'configure' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
+              <button className={`tab-btn ${tab === 'configure' ? 'tab-btn-active' : ''}`}
                 onClick={() => setTab('configure')}>Configure</button>
+              <button className={`tab-btn ${tab === 'send' ? 'tab-btn-active' : ''}`}
+                onClick={() => setTab('send')}>Send</button>
             </div>
             {tab === 'verify' && bothEvm && evmHome && evmRemote && (
               <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
@@ -296,20 +362,24 @@ export function OFTWiring(): JSX.Element {
                 fetchTick={starkFetchTick}
               />
             )}
-            {tab === 'configure' && bothEvm && evmHome && evmRemote && (
-              <EvmEvmConfigurePanel
-                homeChain={evmHome} remoteChain={evmRemote}
-                homeAddr={homeAddr} remoteAddr={remoteAddr}
-                mode={mode} evm={evm} wiring={wiring} verifyResult={verifyResult}
-              />
-            )}
-            {tab === 'configure' && hasStarknet && (
-              <StarknetConfigurePanel
+            {tab === 'configure' && (
+              <ConfigureFlow
                 home={home} remote={remote}
                 homeAddr={homeAddr} remoteAddr={remoteAddr}
-                wiringMode={mode}
-                stark={stark} cairo={cairo} cairoEndpoint={cairoEndpoint} wiring={wiring}
-                evm={evm} verifyResult={verifyResult}
+                isAdapter={mode === 'bridge-oft'}
+                evm={evm} stark={stark}
+                wiring={wiring} cairoEndpoint={cairoEndpoint} cairo={cairo}
+                verifyResult={verifyResult}
+                onRefreshVerify={handleVerify}
+              />
+            )}
+            {tab === 'send' && (
+              <SendPanel
+                home={home} remote={remote}
+                homeAddr={homeAddr} remoteAddr={remoteAddr}
+                mode={mode} evm={evm} stark={stark}
+                wiring={wiring} cairo={cairo}
+                isTestnet={isTestnet}
               />
             )}
           </>
@@ -334,28 +404,6 @@ export function OFTWiring(): JSX.Element {
       </div>
 
     </div>
-  );
-}
-
-// ── DVN icon with initials fallback ──────────────────────────────────────────
-
-function DVNIcon({ provider, size = 22 }: { provider: DVNProvider; size?: number }): JSX.Element {
-  const initials = provider.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  const [failed, setFailed] = useState(false);
-  if (provider.icon && !failed) {
-    return (
-      <img src={provider.icon} alt={provider.name} width={size} height={size}
-        onError={() => setFailed(true)}
-        style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }} />
-    );
-  }
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      width: size, height: size, borderRadius: '50%',
-      background: provider.color + '33', border: `1px solid ${provider.color}`,
-      color: provider.color, fontSize: size * 0.4, fontWeight: 700, flexShrink: 0,
-    }}>{initials}</span>
   );
 }
 
@@ -410,11 +458,13 @@ function ChainIconFallback({ size }: { size: number }): JSX.Element {
 
 function ChainIcon({ chainKey, size = 18 }: { chainKey: string; size?: number }): JSX.Element {
   const [failed, setFailed] = useState(false);
+  // Reset failed state when chain changes so the icon re-attempts loading
+  useEffect(() => { setFailed(false); }, [chainKey]);
   if (failed) return <ChainIconFallback size={size} />;
   return (
     <img src={chainIconUrl(chainKey)} alt="" width={size} height={size}
       onError={() => setFailed(true)}
-      style={{ borderRadius: '50%', flexShrink: 0, objectFit: 'cover' }} />
+      className="rounded-full flex-shrink-0 object-cover" />
   );
 }
 
@@ -436,11 +486,13 @@ function chainCategory(c: LZChain): 'L1' | 'L2' {
 
 // ── Unified chain select (EVM + Starknet) ────────────────────────────────────
 
-function AnyChainSelect({ evmChains, isTestnet, selected, onSelect }: {
+function AnyChainSelect({ evmChains, isTestnet, selected, onSelect, disabledEid }: {
   evmChains: LZChain[];
   isTestnet: boolean;
   selected: AnyChain;
   onSelect: (c: AnyChain) => void;
+  /** EID to grey out (already selected in the other dropdown) */
+  disabledEid?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -472,71 +524,63 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect }: {
   const selectedChainKey = isSelectedStark ? '' : (selected as LZChain).chainKey;
   const displayName = `${selected.name} — EID ${selected.eid}`;
 
+  const snMonogram = <span className="w-[18px] h-[18px] rounded-full bg-[#919bff22] border border-[#919bff55] flex-shrink-0 inline-flex items-center justify-center text-[9px] text-[#919bff] font-bold">SN</span>;
+
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="relative">
       <button
-        className="input"
-        style={{ textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between',
-          ...(isSelectedStark ? { borderColor: '#2a2a5a', color: '#919bff' } : {}) }}
+        className={`input text-left cursor-pointer flex items-center gap-2 justify-between ${isSelectedStark ? 'border-[#2a2a5a] text-[#919bff]' : ''}`}
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {isSelectedStark
-            ? <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#919bff22', border: '1px solid #919bff55', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#919bff', fontWeight: 700 }}>SN</span>
-            : <ChainIcon chainKey={selectedChainKey} size={18} />
-          }
+        <span className="flex items-center gap-2 truncate">
+          {isSelectedStark ? snMonogram : <ChainIcon chainKey={selectedChainKey} size={18} />}
           {displayName}
         </span>
-        <span style={{ color: '#555', fontSize: 11, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
+        <span className="text-[11px] text-on-surface-variant ml-2">{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
         <div className="chain-dropdown">
-          {/* Starknet option pinned at top */}
+          {/* Starknet option */}
           <div
-            className={`chain-option${isSelectedStark ? ' chain-option-active' : ''}`}
-            style={{ borderBottom: '1px solid #2a2a2a', color: isSelectedStark ? '#919bff' : '#919bff88', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={() => { onSelect(stark); setOpen(false); }}
+            className={`chain-option border-b border-outline-variant/10 ${isSelectedStark ? 'chain-option-active' : ''} ${disabledEid === stark.eid ? 'chain-option-disabled' : ''}`}
+            onClick={() => { if (disabledEid !== stark.eid) { onSelect(stark); setOpen(false); } }}
           >
-            <span style={{ width: 18, height: 18, borderRadius: '50%', background: '#919bff22', border: '1px solid #919bff55', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#919bff', fontWeight: 700 }}>SN</span>
-            <span>{stark.name}</span>
-            <span style={{ fontSize: 11, marginLeft: 'auto' }}>EID {stark.eid}</span>
+            {snMonogram}
+            <span className={isSelectedStark ? 'text-[#919bff]' : 'text-[#919bff88]'}>{stark.name}</span>
+            <span className="text-[11px] text-on-surface-variant ml-auto">EID {stark.eid}</span>
           </div>
 
-          {/* Search + EVM list */}
-          <div style={{ padding: '6px 8px', borderBottom: '1px solid #2a2a2a' }}>
-            <input
-              ref={inputRef}
-              className="input"
-              placeholder="Search EVM chain by name or EID…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{ padding: '5px 8px' }}
-            />
+          {/* Search */}
+          <div className="p-2 border-b border-outline-variant/10">
+            <input ref={inputRef} className="input" placeholder="Search chain or EID…"
+              value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
-          <div style={{ overflowY: 'auto', maxHeight: 260 }}>
+          <div className="overflow-y-auto max-h-[260px]">
             {filteredEvm.length === 0 && (
-              <div style={{ padding: '10px 12px', color: '#555', fontSize: 13 }}>No chains match</div>
+              <div className="px-3 py-2.5 text-on-surface-variant text-[13px]">No chains match</div>
             )}
             {(['L1', 'L2'] as const).map((cat) => {
               const group = filteredEvm.filter((c) => chainCategory(c) === cat);
               if (group.length === 0) return null;
               return (
                 <div key={cat}>
-                  <div style={{ padding: '5px 12px 2px', fontSize: 9, fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: '#444' }}>{cat}</div>
-                  {group.map((c) => (
+                  <div className="label px-3 pt-2 pb-0.5 mb-0">{cat}</div>
+                  {group.map((c) => {
+                    const isDisabled = disabledEid === c.eid;
+                    return (
                     <div
                       key={c.eid}
-                      className={`chain-option${!isSelectedStark && (selected as LZChain).eid === c.eid ? ' chain-option-active' : ''}`}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                      onClick={() => { onSelect(toAnyEvm(c)); setOpen(false); }}
+                      className={`chain-option ${!isSelectedStark && (selected as LZChain).eid === c.eid ? 'chain-option-active' : ''} ${isDisabled ? 'chain-option-disabled' : ''}`}
+                      onClick={() => { if (!isDisabled) { onSelect(toAnyEvm(c)); setOpen(false); } }}
                     >
                       <ChainIcon chainKey={c.chainKey} size={18} />
                       <span>{c.name}</span>
-                      <span style={{ color: '#555', fontSize: 11, marginLeft: 'auto' }}>EID {c.eid}</span>
+                      <span className="text-[11px] text-on-surface-variant ml-auto">EID {c.eid}</span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })}
@@ -717,582 +761,219 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
   );
 }
 
-// ── Shared column header ──────────────────────────────────────────────────────
 
-function ChainColumnHeader({ label, chainName, eid, connected }: {
-  label: string; chainName: string; eid: number; connected: boolean;
-}): JSX.Element {
-  return (
-    <div className="flex items-center gap-2 mb-3">
-      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant">{label}</span>
-      <span className="text-xs text-on-surface-variant">{chainName} — EID {eid}</span>
-      {connected
-        ? <span className="text-xs text-secondary ml-auto flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>connected</span>
-        : <span className="text-xs text-outline-variant ml-auto">wallet needed</span>}
-    </div>
-  );
-}
+// ── Send Panel ───────────────────────────────────────────────────────────────
 
-// ── Shared peer connect section (gate) ────────────────────────────────────────
-
-interface PeerSideConfig {
-  chainName: string;
-  chainId: number;
-  peerLabel: string;
-  peerBytes32: string;
-  connectedChainId: number | null;
-  isConnected: boolean;
-  onSwitch: () => void;
-  onSet: () => Promise<TxState>;
-}
-
-function PeerConnectSection({ left, right, evm }: {
-  left: PeerSideConfig;
-  right: PeerSideConfig;
-  evm?: ReturnType<typeof useEvmWallet>;  // only for EVM-EVM
-}): JSX.Element {
-  const [confirmed, setConfirmed] = useState(false);
-  const [leftTx, setLeftTx] = useState<TxState>({ status: 'idle' });
-  const [rightTx, setRightTx] = useState<TxState>({ status: 'idle' });
-
-  return (
-    <div className={`bg-surface-container-low rounded-xl border p-6 mt-4 ${confirmed ? 'border-secondary/20' : 'border-outline-variant/10'}`}>
-      <div className="mb-4">
-        <div className="font-headline text-sm font-bold text-on-surface mb-2">Connect Peers</div>
-        <div className="step-warn-banner">
-          ⚠ Setting peers opens the messaging channel. Tokens can flow immediately. Complete all configuration steps on both sides first.
-        </div>
-      </div>
-      <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer mb-4">
-        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-        Both sides are fully configured and the addresses above are correct.
-      </label>
-      <div className="flex gap-4">
-        {/* Left side peer */}
-        <div className="flex-1">
-          <div className="label">{left.peerLabel}</div>
-          <div className="mono-block mb-2">{left.peerBytes32 || '(enter address above)'}</div>
-          {left.chainId > 0 && left.connectedChainId !== left.chainId && (
-            <button className="btn text-[11px] py-1 px-2.5 mb-1.5" onClick={left.onSwitch}>
-              Switch to {left.chainName}
-            </button>
-          )}
-          <div>
-            <button className="btn btn-primary"
-              disabled={!confirmed || (left.chainId > 0 && (!left.isConnected || left.connectedChainId !== left.chainId))}
-              onClick={async () => { setLeftTx({ status: 'pending' }); setLeftTx(await left.onSet()); }}>
-              Set Peer on {left.chainName}
-            </button>
-          </div>
-          <div className="mt-1.5"><TxStatus state={leftTx} /></div>
-        </div>
-        {/* Right side peer */}
-        <div className="flex-1">
-          <div className="label">{right.peerLabel}</div>
-          <div className="mono-block mb-2">{right.peerBytes32 || '(enter address above)'}</div>
-          {right.chainId > 0 && right.connectedChainId !== right.chainId && (
-            <button className="btn text-[11px] py-1 px-2.5 mb-1.5" onClick={right.onSwitch}>
-              Switch to {right.chainName}
-            </button>
-          )}
-          <div>
-            <button className="btn btn-primary"
-              disabled={!confirmed || (right.chainId > 0 && (!right.isConnected || right.connectedChainId !== right.chainId))}
-              onClick={async () => { setRightTx({ status: 'pending' }); setRightTx(await right.onSet()); }}>
-              Set Peer on {right.chainName}
-            </button>
-          </div>
-          <div className="mt-1.5"><TxStatus state={rightTx} /></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── EVM-EVM configure panel (side-by-side) ────────────────────────────────────
-
-function checkPassed(result: PathwayVerifyResult | null, label: string): boolean {
-  return result?.checks.find((c) => c.label === label)?.passed ?? false;
-}
-
-function EvmEvmConfigurePanel({ homeChain, remoteChain, homeAddr, remoteAddr, mode, evm, wiring, verifyResult }: {
-  homeChain: LZChain; remoteChain: LZChain;
+function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet }: {
+  home: AnyChain; remote: AnyChain;
   homeAddr: string; remoteAddr: string;
   mode: WiringMode;
   evm: ReturnType<typeof useEvmWallet>;
+  stark: ReturnType<typeof useStarknetWallet>;
   wiring: ReturnType<typeof useOFTWiring>;
-  verifyResult: PathwayVerifyResult | null;
+  cairo: ReturnType<typeof useCairoOFT>;
+  isTestnet: boolean;
 }): JSX.Element {
   const isAdapter = mode === 'bridge-oft';
-  const homeConnected = evm.isConnected && evm.chainId === homeChain.chainId;
-  const remoteConnected = evm.isConnected && evm.chainId === remoteChain.chainId;
-  const [evmSide, setEvmSide] = useState<'home' | 'remote'>('home');
+  const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
+  const [amount, setAmount] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [slippage, setSlippage] = useState('5');
 
-  const homeSteps = [
-    ...(isAdapter ? [{ label: 'Rate Limit', done: false }] : []),
-    { label: 'Libraries', done: checkPassed(verifyResult, 'Send library set') },
-    { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (send side)') && checkPassed(verifyResult, 'Executor configured') },
-    { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (send side)') },
-  ];
+  // Send state
+  const [quoting, setQuoting] = useState(false);
+  const [quotedFee, setQuotedFee] = useState<{ nativeFee: bigint; lzTokenFee: bigint } | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [approveTx, setApproveTx] = useState<TxState>({ status: 'idle' });
+  const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
 
-  const remoteSteps = [
-    { label: 'Libraries', done: checkPassed(verifyResult, 'Receive library set') },
-    { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (receive side)') },
-    { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (receive side)') },
-  ];
+  const srcChain = direction === 'AtoB' ? home : remote;
+  const dstChain = direction === 'AtoB' ? remote : home;
+  const srcAddr = direction === 'AtoB' ? homeAddr : remoteAddr;
+  const dstAddr = direction === 'AtoB' ? remoteAddr : homeAddr;
+  const srcIsStark = isStarknet(srcChain);
+  const dstIsStark = isStarknet(dstChain);
 
-  return (
-    <div>
-      {/* Side tabs */}
-      <div className="flex gap-2 mb-4">
-        <button
-          className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${evmSide === 'home' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-          onClick={() => setEvmSide('home')}>
-          <span className="flex items-center gap-1.5">
-            {homeConnected && <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block" />}
-            {homeChain.name}
-          </span>
-        </button>
-        <button
-          className={`px-4 py-2 rounded text-xs font-headline font-bold transition-colors ${evmSide === 'remote' ? 'bg-surface-container-high text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-on-surface'}`}
-          onClick={() => setEvmSide('remote')}>
-          <span className="flex items-center gap-1.5">
-            {remoteConnected && <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block" />}
-            {remoteChain.name}
-          </span>
-        </button>
-      </div>
+  // Use adapter for A→B when mode is bridge-oft, otherwise OFT address
+  const needsApproval = isAdapter && direction === 'AtoB' && !srcIsStark;
 
-      {evmSide === 'home' && (
-        <>
-          <ChainColumnHeader label={isAdapter ? 'Adapter' : 'OFT'} chainName={homeChain.name} eid={homeChain.eid} connected={homeConnected} />
-          <StepProgressBar steps={homeSteps} />
-          <GuidedConfigure
-            homeChain={homeChain} remoteChain={remoteChain}
-            adapterAddr={homeAddr} peerAddr={remoteAddr}
-            connectedChainId={evm.chainId} isConnected={evm.isConnected}
-            signer={evm.signer} onSwitchNetwork={evm.switchNetwork}
-            wiring={wiring} verifyResult={verifyResult}
-            isAdapter={isAdapter} isRemoteEvm={false} hidePeerStep
-          />
-        </>
-      )}
-
-      {evmSide === 'remote' && (
-        <>
-          <ChainColumnHeader label="OFT" chainName={remoteChain.name} eid={remoteChain.eid} connected={remoteConnected} />
-          <StepProgressBar steps={remoteSteps} />
-          <GuidedConfigure
-            homeChain={remoteChain} remoteChain={homeChain}
-            adapterAddr={remoteAddr} peerAddr={homeAddr}
-            connectedChainId={evm.chainId} isConnected={evm.isConnected}
-            signer={evm.signer} onSwitchNetwork={evm.switchNetwork}
-            wiring={wiring} verifyResult={null}
-            isAdapter={false} isRemoteEvm={false} hidePeerStep
-          />
-        </>
-      )}
-
-      <PeerConnectSection
-        left={{
-          chainName: homeChain.name,
-          chainId: homeChain.chainId,
-          peerLabel: `${homeChain.name} → ${remoteChain.name}`,
-          peerBytes32: isAddr(remoteAddr) ? addrToBytes32(remoteAddr) : '',
-          connectedChainId: evm.chainId,
-          isConnected: evm.isConnected,
-          onSwitch: () => evm.switchNetwork(homeChain.chainId),
-          onSet: () => wiring.setEvmPeer(homeAddr, remoteChain.eid, remoteAddr),
-        }}
-        right={{
-          chainName: remoteChain.name,
-          chainId: remoteChain.chainId,
-          peerLabel: `${remoteChain.name} → ${homeChain.name}`,
-          peerBytes32: isAddr(homeAddr) ? addrToBytes32(homeAddr) : '',
-          connectedChainId: evm.chainId,
-          isConnected: evm.isConnected,
-          onSwitch: () => evm.switchNetwork(remoteChain.chainId),
-          onSet: () => wiring.setEvmPeer(remoteAddr, homeChain.eid, homeAddr),
-        }}
-      />
-    </div>
-  );
-}
-
-// ── Starknet configure panel (side-by-side EVM | Starknet) ────────────────────
-
-function StarknetConfigurePanel({ home, remote, homeAddr, remoteAddr, wiringMode, stark, cairo, cairoEndpoint, wiring, evm, verifyResult }: {
-  home: AnyChain; remote: AnyChain;
-  homeAddr: string; remoteAddr: string;
-  wiringMode: WiringMode;
-  stark: ReturnType<typeof useStarknetWallet>;
-  cairo: ReturnType<typeof useCairoOFT>;
-  cairoEndpoint: ReturnType<typeof useCairoEndpoint>;
-  wiring: ReturnType<typeof useOFTWiring>;
-  evm: ReturnType<typeof useEvmWallet>;
-  verifyResult: PathwayVerifyResult | null;
-}): JSX.Element {
-  const starkChainData = (isStarknet(home) ? home : remote) as StarknetChain;
-  const evmChainData   = (isStarknet(home) ? remote : home) as LZChain & { kind: 'evm' };
-  const cairoAddr = isStarknet(home) ? homeAddr : remoteAddr;
-  const evmAddr   = isStarknet(home) ? remoteAddr : homeAddr;
-  const evmIsHome = isEvm(home);
-  const isAdapter = wiringMode === 'bridge-oft';
-
-  const starkAsRemote: LZChain = {
-    eid: starkChainData.eid, chainId: -1, chainKey: starkChainData.chainKey,
-    name: starkChainData.name, endpoint: starkChainData.endpoint,
-    rpc: starkChainData.rpc, isTestnet: starkChainData.isTestnet,
-    sendLib: starkChainData.sendLib, receiveLib: starkChainData.receiveLib,
-  };
-
-  const evmConnected  = evm.isConnected && evm.chainId === evmChainData.chainId;
-  const starkConnected = stark.isConnected;
-  const starkHint = !starkConnected ? <span className="text-xs text-on-surface-variant">Connect Starknet wallet first</span> : null;
-
-  // Starknet accordion — correct LZ order: Delegate→Libraries→DVNs→Executor→EnforcedOptions→Peer(last)
-  const [openStarkStep, setOpenStarkStep] = useState<number | null>(1);
-  const toggleStark = (n: number) => setOpenStarkStep((p) => (p === n ? null : n));
-
-  // Tx states
-  const [delegateTx,     setDelegateTx]     = useState<TxState>({ status: 'idle' });
-  const [libTx,          setLibTx]          = useState<TxState>({ status: 'idle' });
-  const [sendConfigTx,   setSendConfigTx]   = useState<TxState>({ status: 'idle' });
-  const [recvConfigTx,   setRecvConfigTx]   = useState<TxState>({ status: 'idle' });
-  const [enforcedOptsTx, setEnforcedOptsTx] = useState<TxState>({ status: 'idle' });
-
-  // Field state
-  const [cairoDelegate,    setCairoDelegate]    = useState('');
-  const [cairoLib,         setCairoLib]         = useState(starkChainData.sendLib ?? '');
-  const [cairoGracePeriod, setCairoGracePeriod] = useState('0');
-  const [cairoConfirm,     setCairoConfirm]     = useState(starkChainData.isTestnet ? '1' : '15');
-  const [cairoExecutor,    setCairoExecutor]    = useState(starkChainData.executor ?? '');
-  const [cairoMaxMsgSize,  setCairoMaxMsgSize]  = useState('10000');
-  const [cairoGas,         setCairoGas]         = useState('80000');
-
-  // DVNs — single pair for send and receive (same DVNs on both directions is standard)
-  const [sendDvns, setSendDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [recvDvns, setRecvDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [sameRecvDvns, setSameRecvDvns] = useState(true);
-  const { dvns: availableDvns, loading: dvnsLoading } = useDVNCatalog(starkChainData.chainKey);
-
-  function toggleDvn(side: 'send' | 'recv', addr: string, provider: DVNProvider) {
-    const setter = side === 'send' ? setSendDvns : setRecvDvns;
-    setter((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
-  }
-
-  // When "same DVNs" toggle is on, keep recv in sync with send
-  function toggleSendDvn(addr: string, provider: DVNProvider) {
-    setSendDvns((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
-    if (sameRecvDvns) {
-      setRecvDvns((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, provider); return next; });
+  function parseAmount(decimals: number): bigint {
+    try {
+      const parts = amount.split('.');
+      const whole = parts[0] || '0';
+      const frac = (parts[1] || '').padEnd(decimals, '0').slice(0, decimals);
+      return BigInt(whole) * BigInt(10 ** decimals) + BigInt(frac);
+    } catch {
+      return 0n;
     }
   }
 
-  // EVM column is always left, Starknet always right (symmetric regardless of home/remote)
+  function toBytes32(addr: string): string {
+    try {
+      return '0x' + BigInt(addr).toString(16).padStart(64, '0');
+    } catch {
+      return '0x' + '0'.repeat(64);
+    }
+  }
+
+  async function handleQuote(): Promise<void> {
+    setQuoteError(null);
+    setQuotedFee(null);
+    setQuoting(true);
+    try {
+      const amountLD = parseAmount(18); // assume 18 decimals, could be improved
+      const slip = Number(slippage) || 5;
+      const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
+      const recipientAddr = recipient || (evm.address ?? '');
+
+      if (srcIsStark) {
+        // Cairo → EVM
+        const starkData = starkChain(isTestnet);
+        const fee = await cairo.cairoQuoteSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, starkData.rpc);
+        setQuotedFee(fee);
+      } else {
+        // EVM → anywhere
+        const fee = await wiring.quoteSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD);
+        setQuotedFee(fee);
+      }
+    } catch (e) {
+      setQuoteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setQuoting(false);
+    }
+  }
+
+  async function handleApprove(): Promise<void> {
+    if (!srcIsStark && isAdapter && direction === 'AtoB') {
+      setApproveTx({ status: 'pending' });
+      try {
+        // Get underlying token address
+        const provider = evm.signer!;
+        const c = new (await import('ethers')).Contract(srcAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
+        const tokenAddr = await c.token() as string;
+        const amountLD = parseAmount(18);
+        setApproveTx(await wiring.approveToken(tokenAddr, srcAddr, amountLD));
+      } catch (e) {
+        setApproveTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+
+  async function handleSend(): Promise<void> {
+    if (!quotedFee) return;
+    const amountLD = parseAmount(18);
+    const slip = Number(slippage) || 5;
+    const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
+    const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
+
+    setSendTx({ status: 'pending' });
+    try {
+      if (srcIsStark) {
+        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee));
+      } else {
+        setSendTx(await wiring.evmSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD, quotedFee));
+      }
+    } catch (e) {
+      setSendTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  const srcConnected = srcIsStark ? stark.address !== null : (evm.isConnected && evm.chainId === (srcChain as LZChain).chainId);
+  const lzScanLink = sendTx.status === 'success' && sendTx.hash
+    ? (srcIsStark ? `https://layerzeroscan.com` : `https://layerzeroscan.com/tx/${sendTx.hash}`)
+    : null;
+
   return (
-    <div>
-      <div className="flex gap-4 items-start">
+    <Section icon="send" title="Send Tokens" subtitle="Cross-chain OFT transfer — test the wired pathway">
 
-        {/* ── EVM column (left) ── */}
-        <div className="flex-1 min-w-0">
-          <ChainColumnHeader label="EVM" chainName={evmChainData.name} eid={evmChainData.eid} connected={evmConnected} />
-          <StepProgressBar steps={[
-            ...(isAdapter && evmIsHome ? [{ label: 'Rate Limit', done: false }] : []),
-            { label: 'Libraries', done: checkPassed(verifyResult, 'Send library set') },
-            { label: 'DVN',       done: checkPassed(verifyResult, 'DVNs configured (send side)') && checkPassed(verifyResult, 'Executor configured') },
-            { label: 'Options',   done: checkPassed(verifyResult, 'Enforced options set (send side)') },
-          ]} />
-          <GuidedConfigure
-            homeChain={evmChainData}
-            remoteChain={starkAsRemote}
-            adapterAddr={evmIsHome ? homeAddr : remoteAddr}
-            peerAddr={evmIsHome ? remoteAddr : homeAddr}
-            connectedChainId={evm.chainId}
-            isConnected={evm.isConnected}
-            signer={evm.signer}
-            onSwitchNetwork={evm.switchNetwork}
-            wiring={wiring}
-            verifyResult={verifyResult}
-            isAdapter={isAdapter && evmIsHome}
-            isRemoteEvm={false}
-            hidePeerStep
-          />
-        </div>
-
-        {/* ── Starknet column (right) ── */}
-        <div className="flex-1 min-w-0">
-          <ChainColumnHeader label="Starknet" chainName={starkChainData.name} eid={starkChainData.eid} connected={starkConnected} />
-
-          <StepProgressBar steps={[
-            { label: 'Delegate',          done: delegateTx.status === 'success' },
-            { label: 'Message Libraries', done: libTx.status === 'success' },
-            { label: 'Send Config',       done: sendConfigTx.status === 'success' },
-            { label: 'Receive Config',    done: recvConfigTx.status === 'success' },
-            { label: 'Enforced Options',  done: enforcedOptsTx.status === 'success' },
-          ]} />
-
-          {/* Step 1 — Delegate (FIRST — required before endpoint can be configured) */}
-          <CairoStepCard n={1} title="Delegate" subtitle="Set delegate before configuring the endpoint. Required first step."
-            done={delegateTx.status === 'success'}
-            open={openStarkStep === 1} onToggle={() => toggleStark(1)}>
-            <p className="step-hint">The delegate authorises an external account to configure the endpoint on behalf of this OFT. Must be set before steps 2–4.</p>
-            <div className="mb-2">
-              <div className="label">Delegate address</div>
-              <input className="input" value={cairoDelegate} onChange={(e) => setCairoDelegate(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoDelegate}
-                onClick={async () => { setDelegateTx({ status: 'pending' }); setDelegateTx(await cairoEndpoint.setDelegate(cairoAddr, cairoDelegate, starkChainData.rpc)); }}>
-                Set Delegate
-              </button>
-              {starkHint}
-            </div>
-            <TxStatus state={delegateTx} />
-          </CairoStepCard>
-
-          {/* Step 2 — Message Libraries */}
-          <CairoStepCard n={2} title="Message Libraries" subtitle="Set send & receive library. On Starknet both use the same address."
-            done={libTx.status === 'success'}
-            open={openStarkStep === 2} onToggle={() => toggleStark(2)}>
-            <p className="step-hint">SendUln302 and ReceiveUln302 are the same contract on Starknet — one address sets both directions.</p>
-            {starkChainData.sendLib && (
-              <div className="text-xs text-on-surface-variant mb-2">
-                Known lib: <span className="font-mono text-[11px] text-on-surface">{starkChainData.sendLib}</span>
-              </div>
-            )}
-            <div className="mb-2">
-              <div className="label">Library address (ULN302)</div>
-              <input className="input" value={cairoLib} onChange={(e) => setCairoLib(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div className="mb-2">
-              <div className="label">Grace period (blocks, 0 = immediate)</div>
-              <input className="input w-[120px]" value={cairoGracePeriod} onChange={(e) => setCairoGracePeriod(e.target.value)} />
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr || !cairoLib}
-                onClick={async () => { setLibTx({ status: 'pending' }); setLibTx(await cairoEndpoint.setLibraries(starkChainData.endpoint, cairoAddr, evmChainData.eid, cairoLib, Number(cairoGracePeriod), starkChainData.rpc)); }}>
-                Set Send &amp; Receive Library
-              </button>
-              {starkHint}
-            </div>
-            <TxStatus state={libTx} />
-          </CairoStepCard>
-
-          {/* Step 3 — Send Config: DVN + Executor (atomic, per LZ SDK recommendation) */}
-          <CairoStepCard n={3} title="Send Config" subtitle="Set DVN security stack + executor atomically on the Starknet Endpoint (send direction)."
-            done={sendConfigTx.status === 'success'}
-            open={openStarkStep === 3} onToggle={() => toggleStark(3)}>
-            <p className="step-hint">DVN and executor are set together in one transaction (LZ recommended). DVN addresses are sorted ascending automatically.</p>
-            <div className="mb-2 text-xs text-on-surface-variant">
-              Using library: <span className="font-mono text-on-surface">{cairoLib || <span className="text-outline-variant">not set — configure in step 2</span>}</span>
-            </div>
-            <div className="mb-2">
-              <div className="label">Required DVNs (send — Starknet → EVM)</div>
-              <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={sendDvns} onToggle={(a, p) => toggleSendDvn(a, p)} />
-              {sendDvns.size === 0 && <div className="text-[11px] text-on-surface-variant mt-1">Select at least one DVN</div>}
-            </div>
-            <div className="form-grid mb-2">
-              <div>
-                <div className="label">Block confirmations</div>
-                <input className="input" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} />
-              </div>
-              <div>
-                <div className="label">Max message size (bytes)</div>
-                <input className="input" value={cairoMaxMsgSize} onChange={(e) => setCairoMaxMsgSize(e.target.value)} />
-              </div>
-            </div>
-            <div className="mb-2">
-              <div className="label">Executor address</div>
-              <input className="input" value={cairoExecutor} onChange={(e) => setCairoExecutor(e.target.value)} placeholder="0x…" spellCheck={false} />
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <button className="btn btn-primary"
-                disabled={!starkConnected || !cairoAddr || !cairoLib || sendDvns.size === 0 || !cairoExecutor}
-                onClick={async () => {
-                  setSendConfigTx({ status: 'pending' });
-                  setSendConfigTx(await cairoEndpoint.setSendConfigsAtomic(
-                    starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
-                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...sendDvns.keys()]) },
-                    { maxMessageSize: Number(cairoMaxMsgSize), executor: cairoExecutor },
-                    starkChainData.rpc,
-                  ));
-                }}>Set Send Config (DVN + Executor)</button>
-              {starkHint}
-            </div>
-            <TxStatus state={sendConfigTx} />
-          </CairoStepCard>
-
-          {/* Step 4 — Receive Config: DVN only (executor not used on receive side) */}
-          <CairoStepCard n={4} title="Receive Config" subtitle="Set DVN security stack on the Starknet Endpoint (receive direction)."
-            done={recvConfigTx.status === 'success'}
-            open={openStarkStep === 4} onToggle={() => toggleStark(4)}>
-            <p className="step-hint">Receive side only needs DVN config — no executor required. By default uses the same DVNs as send.</p>
-            <div className="mb-2 text-xs text-on-surface-variant">
-              Using library: <span className="font-mono text-on-surface">{cairoLib || <span className="text-outline-variant">not set — configure in step 2</span>}</span>
-            </div>
-            {/* Same-DVNs toggle */}
-            <label className="flex items-center gap-2 text-xs text-on-surface cursor-pointer mb-2">
-              <input type="checkbox" checked={sameRecvDvns} onChange={(e) => {
-                setSameRecvDvns(e.target.checked);
-                if (e.target.checked) setRecvDvns(new Map(sendDvns));
-              }} />
-              Use same DVNs as send direction (recommended)
-            </label>
-            {!sameRecvDvns && (
-              <div className="mb-2">
-                <div className="label">Required DVNs (receive — EVM → Starknet)</div>
-                <CairoDVNPicker dvns={availableDvns} loading={dvnsLoading} selected={recvDvns} onToggle={(a, p) => toggleDvn('recv', a, p)} />
-                {recvDvns.size === 0 && <div className="text-[11px] text-on-surface-variant mt-1">Select at least one DVN</div>}
-              </div>
-            )}
-            <div className="mb-2">
-              <div className="label">Block confirmations</div>
-              <input className="input w-[100px]" value={cairoConfirm} onChange={(e) => setCairoConfirm(e.target.value)} />
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <button className="btn btn-primary"
-                disabled={!starkConnected || !cairoAddr || !cairoLib || (sameRecvDvns ? sendDvns.size === 0 : recvDvns.size === 0)}
-                onClick={async () => {
-                  setRecvConfigTx({ status: 'pending' });
-                  const dvns = sameRecvDvns ? sendDvns : recvDvns;
-                  setRecvConfigTx(await cairoEndpoint.setUlnReceiveConfig(
-                    starkChainData.endpoint, cairoAddr, cairoLib, evmChainData.eid,
-                    { confirmations: Number(cairoConfirm), requiredDvns: sortDvns([...dvns.keys()]) },
-                    starkChainData.rpc,
-                  ));
-                }}>Set Receive Config</button>
-              {starkHint}
-            </div>
-            <TxStatus state={recvConfigTx} />
-          </CairoStepCard>
-
-          {/* Step 5 — Enforced Options (AFTER DVNs and executor, before peers) */}
-          <CairoStepCard n={5} title="Enforced Options" subtitle="Set minimum gas for lzReceive on the Starknet OFT."
-            done={enforcedOptsTx.status === 'success'}
-            open={openStarkStep === 5} onToggle={() => toggleStark(5)}>
-            <p className="step-hint">Must be set after DVN and executor config, but before opening peers.</p>
-            <div className="flex gap-2 items-end flex-wrap mb-2">
-              <div>
-                <div className="label">Gas limit for lzReceive</div>
-                <input className="input w-[140px]" value={cairoGas} onChange={(e) => setCairoGas(e.target.value)} />
-              </div>
-              <button className="btn btn-primary" disabled={!starkConnected || !cairoAddr}
-                onClick={async () => { setEnforcedOptsTx({ status: 'pending' }); setEnforcedOptsTx(await cairoEndpoint.setEnforcedOptions(cairoAddr, evmChainData.eid, BigInt(cairoGas), starkChainData.rpc)); }}>
-                Set on Starknet OFT
-              </button>
-              {starkHint}
-            </div>
-            <TxStatus state={enforcedOptsTx} />
-          </CairoStepCard>
-        </div>
-
+      {/* Direction toggle */}
+      <div className="flex gap-2 mb-4">
+        <button className={`tab-btn ${direction === 'AtoB' ? 'tab-btn-active' : ''}`}
+          onClick={() => { setDirection('AtoB'); setQuotedFee(null); }}>
+          {home.name} → {remote.name}
+        </button>
+        <button className={`tab-btn ${direction === 'BtoA' ? 'tab-btn-active' : ''}`}
+          onClick={() => { setDirection('BtoA'); setQuotedFee(null); }}>
+          {remote.name} → {home.name}
+        </button>
       </div>
 
-      {/* ── Shared peer section (gated) ── */}
-      <PeerConnectSection
-        left={{
-          chainName: evmChainData.name,
-          chainId: evmChainData.chainId,
-          peerLabel: `${evmChainData.name} → Starknet`,
-          peerBytes32: isAddr(cairoAddr) ? addrToBytes32(cairoAddr) : '',
-          connectedChainId: evm.chainId,
-          isConnected: evm.isConnected,
-          onSwitch: () => evm.switchNetwork(evmChainData.chainId),
-          onSet: () => wiring.setEvmPeer(evmIsHome ? homeAddr : remoteAddr, starkChainData.eid, cairoAddr),
-        }}
-        right={{
-          chainName: starkChainData.name,
-          chainId: -1,   // no chainId gate for Starknet (wallet is already connected)
-          peerLabel: `Starknet → ${evmChainData.name}`,
-          peerBytes32: isAddr(evmAddr) ? addrToBytes32(evmAddr) : '',
-          connectedChainId: null,
-          isConnected: starkConnected,
-          onSwitch: () => {},
-          onSet: () => cairo.setPeer(cairoAddr, evmChainData.eid, evmAddr),
-        }}
-      />
-    </div>
-  );
-}
-
-// ── Cairo DVN picker (inline, no external search) ─────────────────────────────
-
-function CairoDVNPicker({ dvns, loading, selected, onToggle }: {
-  dvns: DVNProvider[];
-  loading: boolean;
-  selected: Map<string, DVNProvider>;
-  onToggle: (addr: string, provider: DVNProvider) => void;
-}): JSX.Element {
-  if (loading) return <div className="text-xs text-on-surface-variant">Loading DVNs…</div>;
-  if (dvns.length === 0) return (
-    <div className="text-xs text-on-surface-variant">No DVNs found for this chain. Enter addresses manually if needed.</div>
-  );
-  return (
-    <div className="flex flex-col gap-1">
-      {dvns.map((p) => {
-        const addr = p.address.toLowerCase();
-        const checked = selected.has(addr);
-        return (
-          <label key={p.address} style={{
-            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-            padding: '6px 8px', borderRadius: 6,
-            background: checked ? p.color + '15' : 'transparent',
-            border: `1px solid ${checked ? p.color + '66' : 'rgba(64,72,93,0.3)'}`,
-          }}>
-            <input type="checkbox" checked={checked} onChange={() => onToggle(addr, p)} />
-            <DVNIcon provider={p} size={22} />
-            <div className="flex-1">
-              <div className="text-[13px] font-semibold text-on-surface">{p.name}</div>
-              <div className="text-[10px] text-on-surface-variant font-mono">{p.address.slice(0, 12)}…{p.address.slice(-6)}</div>
-            </div>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
-function CairoStepCard({ n, title, subtitle, done, open, onToggle, children }: {
-  n: number; title: string; subtitle: string;
-  /** true = completed this session (tx success) */
-  done?: boolean;
-  open: boolean; onToggle: () => void;
-  children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <div className={`bg-surface-container rounded-lg border mt-1.5 overflow-hidden ${open ? 'border-outline-variant/20' : done ? 'border-secondary/20' : 'border-outline-variant/10'}`}>
-      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-container-high transition-colors" onClick={onToggle}>
-        <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0 ${done ? 'bg-secondary/15 border border-secondary/40 text-secondary' : 'bg-primary/10 border border-primary/20 text-primary'}`}>
-          {done ? '✓' : n}
-        </span>
-        <div className="flex-1">
-          <div className={`font-headline text-sm font-semibold ${done ? 'text-secondary' : 'text-on-surface'}`}>{title}</div>
-          <div className="text-[11px] text-on-surface-variant">{subtitle}</div>
-        </div>
-        <span className="text-on-surface-variant text-xs ml-2">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && <div className="px-4 pb-4 pt-2 border-t border-outline-variant/10">{children}</div>}
-    </div>
-  );
-}
-
-/** Compact step progress bar — shows X/total steps with colour-coded dots. */
-function StepProgressBar({ steps }: { steps: Array<{ label: string; done: boolean }> }): JSX.Element {
-  const doneCount = steps.filter((s) => s.done).length;
-  const allDone = doneCount === steps.length;
-  return (
-    <div className="flex items-center gap-3 mb-3 px-1">
-      <div className="flex gap-1.5">
-        {steps.map((s, i) => (
-          <span key={i} title={s.label}
-            className={`w-2 h-2 rounded-full transition-colors ${s.done ? 'bg-secondary' : 'bg-outline-variant/30'}`} />
-        ))}
+      <div className="text-xs text-on-surface-variant mb-3">
+        Source: <span className="text-on-surface font-mono">{srcAddr.slice(0, 10)}…</span> on {srcChain.name}
+        {' → '}Destination: <span className="text-on-surface font-mono">{dstAddr.slice(0, 10)}…</span> on {dstChain.name}
       </div>
-      <span className={`text-[11px] font-mono ${allDone ? 'text-secondary' : 'text-on-surface-variant'}`}>
-        {doneCount}/{steps.length} steps {allDone ? 'complete ✓' : 'done'}
-      </span>
-    </div>
+
+      {/* Amount + recipient */}
+      <div className="form-grid mb-3">
+        <div>
+          <div className="label">Amount</div>
+          <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" />
+        </div>
+        <div>
+          <div className="label">Recipient (leave empty = self)</div>
+          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={evm.address ?? stark.address ?? '0x…'} spellCheck={false} />
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="label">Slippage tolerance (%)</div>
+        <input className="input w-[80px]" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 items-center flex-wrap">
+        <button className="btn" onClick={handleQuote} disabled={quoting || !amount || !srcAddr}>
+          {quoting ? 'Quoting…' : 'Quote Fee'}
+        </button>
+
+        {needsApproval && (
+          <button className="btn" onClick={handleApprove} disabled={approveTx.status === 'pending' || !amount}>
+            {approveTx.status === 'pending' ? 'Approving…' : 'Approve'}
+          </button>
+        )}
+
+        <button className="btn btn-primary" onClick={handleSend}
+          disabled={!quotedFee || sendTx.status === 'pending' || !srcConnected}>
+          {sendTx.status === 'pending' ? 'Sending…' : 'Send'}
+        </button>
+
+        {!srcConnected && !srcIsStark && evm.isConnected && (
+          <button className="btn btn-sm" onClick={() => evm.switchNetwork((srcChain as LZChain).chainId)}>
+            Switch to {srcChain.name}
+          </button>
+        )}
+        {!srcConnected && !srcIsStark && !evm.isConnected && (
+          <span className="text-[11px] text-on-surface-variant">Connect EVM wallet</span>
+        )}
+        {!srcConnected && srcIsStark && (
+          <span className="text-[11px] text-on-surface-variant">Connect Starknet wallet</span>
+        )}
+      </div>
+
+      {/* Status */}
+      {quoteError && <div className="text-xs text-error mt-2">{quoteError}</div>}
+      {quotedFee && (
+        <div className="bg-surface-container rounded-lg p-3 mt-3 border border-outline-variant/10">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Quoted fee</div>
+          <div className="text-sm text-on-surface font-mono">
+            {(Number(quotedFee.nativeFee) / 1e18).toFixed(6)} native
+            {quotedFee.lzTokenFee > 0n && ` + ${(Number(quotedFee.lzTokenFee) / 1e18).toFixed(6)} LZ token`}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3">
+        {approveTx.status !== 'idle' && <TxStatus state={approveTx} />}
+        <TxStatus state={sendTx} />
+      </div>
+
+      {lzScanLink && (
+        <a href={lzScanLink} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-1.5 mt-2 text-xs text-primary hover:underline">
+          Track on LayerZero Scan ↗
+        </a>
+      )}
+    </Section>
   );
 }
 
@@ -1470,7 +1151,7 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
         <div>
           <h3 className="font-headline text-base font-bold text-on-surface m-0">Pathway verification</h3>
           <span className="text-xs text-on-surface-variant">
-            {homeChain.name} (EID {homeChain.eid}) → {remoteChain.name} (EID {remoteChain.eid})
+            {homeChain.name} ↔ {remoteChain.name} — bidirectional
           </span>
         </div>
         <button className="btn" onClick={onVerify} disabled={verifying}>
@@ -1490,15 +1171,19 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
 
       {result && !result.error && (
         <>
+          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-2">A → B ({homeChain.name} → {remoteChain.name})</div>
           <div className="verify-summary">
-            <SummaryItem label="Executor" value={result.homeExecutor?.executor ?? '—'} />
-            <SummaryItem label="Max msg size" value={result.homeExecutor ? `${result.homeExecutor.maxMessageSize} bytes` : '—'} />
             <SummaryItem label="Send lib" value={result.homeSendLib ?? '—'} />
             <SummaryItem label="Recv lib" value={result.remoteReceiveLib ? `${result.remoteReceiveLib}${result.remoteReceiveLibIsDefault ? ' (default)' : ''}` : '—'} />
+            <SummaryItem label="Executor" value={result.homeExecutor?.executor ?? '—'} />
             <SummaryItem label="Confirmations" value={result.homeDVN ? `${result.homeDVN.confirmations} blocks` : '—'} />
-            {isAdapter && result.homeRateLimit !== undefined && (
-              <SummaryItem label="Rate limit" value={result.homeRateLimit ? `${String(result.homeRateLimit.limit)} / ${result.homeRateLimit.window}s` : 'disabled'} />
-            )}
+          </div>
+          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-3">B → A ({remoteChain.name} → {homeChain.name})</div>
+          <div className="verify-summary">
+            <SummaryItem label="Send lib" value={result.remoteSendLib ?? '—'} />
+            <SummaryItem label="Recv lib" value={result.homeReceiveLib ? `${result.homeReceiveLib}${result.homeReceiveLibIsDefault ? ' (default)' : ''}` : '—'} />
+            <SummaryItem label="Executor" value={result.remoteExecutor?.executor ?? '—'} />
+            <SummaryItem label="Confirmations" value={result.remoteSendDVN ? `${result.remoteSendDVN.confirmations} blocks` : '—'} />
           </div>
 
           <div className="flex gap-3 my-3 text-xs">
@@ -1557,13 +1242,25 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
                   <RawRow label="Rate limit" value={result.homeRateLimit ? `${String(result.homeRateLimit.limit)} / ${result.homeRateLimit.window}s` : 'none'} />
                 )}
               </RawSection>
-              <RawSection title={`${remoteChain.name} — receive side`}>
+              <RawSection title={`${remoteChain.name} — A→B receive side`}>
                 <RawRow label="EID" value={String(remoteChain.eid)} />
                 <RawRow label="Receive library" value={result.remoteReceiveLib ? `${result.remoteReceiveLib}${result.remoteReceiveLibIsDefault ? ' (default)' : ''}` : null} />
                 <RawRow label="DVNs (required)" value={result.remoteDVN?.requiredDVNs.map((a) => dvnLabel(a, resolveRemote)).join('\n') ?? null} />
                 <RawRow label="Confirmations" value={result.remoteDVN?.confirmations != null ? String(result.remoteDVN.confirmations) : null} />
                 <RawRow label="Enforced options" value={result.remoteEnforcedOptions} />
                 <RawRow label="Peer bytes32" value={result.remotePeer} />
+              </RawSection>
+              <RawSection title={`${remoteChain.name} — B→A send side`}>
+                <RawRow label="Send library" value={result.remoteSendLib} />
+                <RawRow label="Executor" value={result.remoteExecutor?.executor} />
+                <RawRow label="DVNs (required)" value={result.remoteSendDVN?.requiredDVNs.map((a) => dvnLabel(a, resolveRemote)).join('\n') ?? null} />
+                <RawRow label="Confirmations" value={result.remoteSendDVN?.confirmations != null ? String(result.remoteSendDVN.confirmations) : null} />
+                <RawRow label="Delegate" value={result.remoteDelegate} />
+              </RawSection>
+              <RawSection title={`${homeChain.name} — B→A receive side`}>
+                <RawRow label="Receive library" value={result.homeReceiveLib ? `${result.homeReceiveLib}${result.homeReceiveLibIsDefault ? ' (default)' : ''}` : null} />
+                <RawRow label="DVNs (required)" value={result.homeReceiveDVN?.requiredDVNs.map((a) => dvnLabel(a, resolveHome)).join('\n') ?? null} />
+                <RawRow label="Confirmations" value={result.homeReceiveDVN?.confirmations != null ? String(result.homeReceiveDVN.confirmations) : null} />
               </RawSection>
             </div>
           </details>
