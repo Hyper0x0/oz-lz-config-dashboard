@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { TxStatus } from '@/components/TxStatus';
 import type { TxState } from '@/types';
 import type { StepProps } from '../types';
+import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
@@ -45,7 +46,7 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
       <NetworkHint side={home} />
       <button className="btn btn-primary" disabled={!home.isConnected || home.needsNetworkSwitch}
         onClick={handleSet}>Set Rate Limit</button>
-      <div className="mt-1.5"><TxStatus state={tx} /></div>
+      <div className="mt-1.5"><TxStatus state={tx} explorerUrl={explorerTxUrl(home)} /></div>
     </div>
   );
 }

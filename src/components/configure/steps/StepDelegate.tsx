@@ -3,6 +3,7 @@ import { TxStatus } from '@/components/TxStatus';
 import { isStarknet } from '@/config/lzCatalog';
 import type { TxState } from '@/types';
 import type { StepProps } from '../types';
+import { explorerTxUrl } from '../types';
 
 export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
   const [homeDelegate, setHomeDelegate] = useState('');
@@ -58,7 +59,7 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
           <NetworkHint side={home} />
           <button className="btn btn-primary" disabled={!home.isConnected || home.needsNetworkSwitch || !homeDelegate}
             onClick={handleHome}>Set Delegate</button>
-          <div className="mt-1.5"><TxStatus state={homeTx} /></div>
+          <div className="mt-1.5"><TxStatus state={homeTx} explorerUrl={explorerTxUrl(home)} /></div>
         </div>
 
         {/* Remote side */}
@@ -74,7 +75,7 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
           <NetworkHint side={remote} />
           <button className="btn btn-primary" disabled={!remote.isConnected || remote.needsNetworkSwitch || !remoteDelegate}
             onClick={handleRemote}>Set Delegate</button>
-          <div className="mt-1.5"><TxStatus state={remoteTx} /></div>
+          <div className="mt-1.5"><TxStatus state={remoteTx} explorerUrl={explorerTxUrl(remote)} /></div>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
+// StarknetChain used in readCairoSide
 import type { PathwayVerifyResult } from '@/types';
 import type { useOFTWiring } from '@/hooks/useOFTWiring';
 import type { useCairoEndpoint } from '@/hooks/useCairoEndpoint';
@@ -71,7 +72,19 @@ function buildSide(
   };
 }
 
-// ── Derive step statuses from verify result ─────────────────────────────────
+// ── Cairo on-chain state (for Starknet sides) ──────────────────────────────
+
+interface CairoSideState {
+  delegate: boolean;
+  sendLib: boolean;
+  recvLib: boolean;
+  enforcedOptions: boolean;
+  peer: boolean;
+}
+
+const EMPTY_CAIRO: CairoSideState = { delegate: false, sendLib: false, recvLib: false, enforcedOptions: false, peer: false };
+
+// ── Derive step statuses from verify result + cairo reads ───────────────────
 
 function deriveStatuses(
   vr: PathwayVerifyResult | null,
@@ -79,9 +92,10 @@ function deriveStatuses(
   homeKind: 'evm' | 'starknet',
   remoteKind: 'evm' | 'starknet',
   txSuccessMap: Set<string>,
+  homeCairo: CairoSideState,
+  remoteCairo: CairoSideState,
 ): Record<StepId, StepStatus> {
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
-  const ZERO64 = '0x' + '0'.repeat(64);
 
   function checkLabel(label: string): boolean {
     return vr?.checks.find((c) => c.label === label)?.passed ?? false;
@@ -92,33 +106,45 @@ function deriveStatuses(
     return verifyPassed ? 'configured' : 'unconfigured';
   }
 
+  // For each step+side: use EVM verify result when available, else Cairo reads
+  function homeCheck(stepId: string, evmCheck: boolean, cairoCheck: boolean): 'configured' | 'unconfigured' {
+    return fromTxOrVerify(stepId, 'home', homeKind === 'evm' ? evmCheck : cairoCheck);
+  }
+
+  function remoteCheck(stepId: string, evmCheck: boolean, cairoCheck: boolean): 'configured' | 'unconfigured' {
+    return fromTxOrVerify(stepId, 'remote', remoteKind === 'evm' ? evmCheck : cairoCheck);
+  }
+
   return {
     delegate: {
-      home: fromTxOrVerify('delegate', 'home',
-        vr ? (!!vr.homeDelegate && vr.homeDelegate !== ZERO_ADDR) : false),
-      remote: fromTxOrVerify('delegate', 'remote',
-        vr ? (!!vr.remoteDelegate && vr.remoteDelegate !== ZERO_ADDR) : false),
+      home: homeCheck('delegate',
+        vr ? (!!vr.homeDelegate && vr.homeDelegate !== ZERO_ADDR) : false,
+        homeCairo.delegate),
+      remote: remoteCheck('delegate',
+        vr ? (!!vr.remoteDelegate && vr.remoteDelegate !== ZERO_ADDR) : false,
+        remoteCairo.delegate),
     },
     libraries: {
-      home: fromTxOrVerify('libraries', 'home', checkLabel('Send library set')),
-      remote: fromTxOrVerify('libraries', 'remote', checkLabel('Receive library set')),
+      home: homeCheck('libraries', checkLabel('Send library set'), homeCairo.sendLib),
+      remote: remoteCheck('libraries', checkLabel('Receive library set'), remoteCairo.recvLib),
     },
     dvn: {
-      home: fromTxOrVerify('dvn', 'home',
-        checkLabel('DVNs configured (send side)') && checkLabel('Executor configured')),
-      remote: fromTxOrVerify('dvn', 'remote', checkLabel('DVNs configured (receive side)')),
+      home: homeCheck('dvn',
+        checkLabel('DVNs configured (send side)') && checkLabel('Executor configured'),
+        false), // No DVN read method for Starknet yet — falls back to tx tracking
+      remote: remoteCheck('dvn', checkLabel('DVNs configured (receive side)'), false),
     },
     options: {
-      home: fromTxOrVerify('options', 'home', checkLabel('Enforced options set (send side)')),
-      remote: fromTxOrVerify('options', 'remote', checkLabel('Enforced options set (receive side)')),
+      home: homeCheck('options', checkLabel('Enforced options set (send side)'), homeCairo.enforcedOptions),
+      remote: remoteCheck('options', checkLabel('Enforced options set (receive side)'), remoteCairo.enforcedOptions),
     },
     rateLimit: {
       home: fromTxOrVerify('rateLimit', 'home', !!vr?.homeRateLimit),
-      remote: 'configured', // N/A for remote
+      remote: 'configured',
     },
     peers: {
-      home: fromTxOrVerify('peers', 'home', checkLabel('Peer set (home → remote)')),
-      remote: fromTxOrVerify('peers', 'remote', checkLabel('Peer set (remote → home)')),
+      home: homeCheck('peers', checkLabel('Peer set (home → remote)'), homeCairo.peer),
+      remote: remoteCheck('peers', checkLabel('Peer set (remote → home)'), remoteCairo.peer),
     },
   };
 }
@@ -144,6 +170,9 @@ export function ConfigureFlow({
 
   const [openStep, setOpenStep] = useState<StepId | null>('delegate');
   const [txSuccessMap, setTxSuccessMap] = useState<Set<string>>(new Set());
+  const [homeCairo, setHomeCairo] = useState<CairoSideState>(EMPTY_CAIRO);
+  const [remoteCairo, setRemoteCairo] = useState<CairoSideState>(EMPTY_CAIRO);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const homeSide = buildSide(home, homeAddr, isAdapter, evm, stark);
   const remoteSide = buildSide(remote, remoteAddr, false, evm, stark);
@@ -151,10 +180,64 @@ export function ConfigureFlow({
   const hooks: ConfigHooks = { wiring, cairoEndpoint, cairo, evm, stark };
   const steps = buildStepDefs(isAdapter && homeSide.kind === 'evm');
 
-  const statuses = deriveStatuses(verifyResult, isAdapter, homeSide.kind, remoteSide.kind, txSuccessMap);
+  // ── Read Starknet on-chain state for progress tracking ──────────────────
+  const ZERO64 = '0x' + '0'.repeat(64);
+  const cairoReadRef = useRef(0);
+
+  // Capture stable references to avoid stale closures
+  const cairoEndpointRef = useRef(cairoEndpoint);
+  cairoEndpointRef.current = cairoEndpoint;
+  const cairoRef = useRef(cairo);
+  cairoRef.current = cairo;
+
+  useEffect(() => {
+    const tick = ++cairoReadRef.current;
+    const ce = cairoEndpointRef.current;
+    const co = cairoRef.current;
+
+    async function readCairoSide(
+      starkChain: StarknetChain | undefined,
+      contractAddr: string,
+      remoteEid: number,
+      setter: (s: CairoSideState) => void,
+    ): Promise<void> {
+      if (!starkChain || !contractAddr || contractAddr === '0x') return;
+      const rpc = starkChain.rpc;
+      const ep = starkChain.endpoint;
+      try {
+        const [delegate, sendLib, recvLibResult, enforcedOpts, peerResult] = await Promise.allSettled([
+          ce.readDelegate(ep, contractAddr, rpc),
+          ce.readSendLibrary(ep, contractAddr, remoteEid, rpc),
+          ce.readReceiveLibrary(ep, contractAddr, remoteEid, rpc),
+          co.readEnforcedOptions(contractAddr, remoteEid, rpc),
+          co.readPeer(contractAddr, remoteEid, rpc),
+        ]);
+        if (tick !== cairoReadRef.current) return; // stale
+        setter({
+          delegate: delegate.status === 'fulfilled' && !!delegate.value,
+          sendLib: sendLib.status === 'fulfilled' && !!sendLib.value,
+          recvLib: recvLibResult.status === 'fulfilled' && !!(recvLibResult.value as any)?.lib,
+          enforcedOptions: enforcedOpts.status === 'fulfilled' && !!enforcedOpts.value,
+          peer: peerResult.status === 'fulfilled' && !!(peerResult.value as any)?.peer && (peerResult.value as any).peer !== ZERO64,
+        });
+      } catch { /* ignore */ }
+    }
+
+    // Read home side if Starknet
+    if (isStarknet(home)) {
+      void readCairoSide(home as StarknetChain, homeAddr, remote.eid, setHomeCairo);
+    }
+    // Read remote side if Starknet
+    if (isStarknet(remote)) {
+      void readCairoSide(remote as StarknetChain, remoteAddr, home.eid, setRemoteCairo);
+    }
+  }, [homeAddr, remoteAddr, home.eid, remote.eid, refreshTick, home, remote]);
+
+  const statuses = deriveStatuses(verifyResult, isAdapter, homeSide.kind, remoteSide.kind, txSuccessMap, homeCairo, remoteCairo);
 
   const handleTxSuccess = useCallback((stepId: StepId, side: 'home' | 'remote') => {
     setTxSuccessMap((prev) => { const next = new Set(prev); next.add(`${stepId}-${side}`); return next; });
+    setRefreshTick((t) => t + 1);
     onRefreshVerify();
   }, [onRefreshVerify]);
 

@@ -192,6 +192,8 @@ export type OperationState = 'Unset' | 'Waiting' | 'Ready' | 'Done';
 export interface PeerEntry {
   eid: number;
   name: string;
+  /** Chain key for icon resolution (e.g. 'arbitrum', 'ethereum') */
+  chainKey?: string;
   /** bytes32 hex (EVM) or felt hex (Starknet) — null means zero / not set */
   peer: string | null;
   error?: boolean;

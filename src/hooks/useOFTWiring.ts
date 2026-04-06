@@ -1,5 +1,10 @@
 import { useCallback } from 'react';
 import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner } from 'ethers';
+
+/** Provider with staticNetwork to skip auto-detection retry loops */
+function staticProvider(rpc: string): JsonRpcProvider {
+  return new JsonRpcProvider(rpc, undefined, { staticNetwork: true });
+}
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
 import ERC20ABI from '@/abis/evm/ERC20.json';
@@ -49,8 +54,8 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const readTokenInfo = useCallback(
     async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider): Promise<TokenInfo> => {
-      const homeProvider = walletProvider ?? new JsonRpcProvider(homeRpc);
-      const remoteProvider = new JsonRpcProvider(remoteRpc);
+      const homeProvider = walletProvider ?? staticProvider(homeRpc);
+      const remoteProvider = staticProvider(remoteRpc);
       const adapter = adapterContract(adapterAddr, homeProvider);
       const peer = peerContract(peerAddr, remoteProvider);
 
@@ -70,7 +75,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const readEvmSideInfo = useCallback(
     async (addr: string, rpc: string, isAdapterSide: boolean): Promise<{ name: string; symbol: string }> => {
-      const provider = new JsonRpcProvider(rpc);
+      const provider = staticProvider(rpc);
       if (isAdapterSide) {
         const adapter = adapterContract(addr, provider);
         const tokenAddr = await adapter.token();
@@ -87,7 +92,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const readAdapterState = useCallback(
     async (adapterAddr: string, peerEid: number, homeRpc: string): Promise<AdapterState> => {
-      const provider = new JsonRpcProvider(homeRpc);
+      const provider = staticProvider(homeRpc);
       const c = adapterContract(adapterAddr, provider);
       const [owner, token, peer, opts, rl, flight] = await Promise.all([
         c.owner(),
@@ -117,7 +122,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const readPeerState = useCallback(
     async (peerAddr: string, adapterEid: number, remoteRpc: string): Promise<PeerState> => {
-      const provider = new JsonRpcProvider(remoteRpc);
+      const provider = staticProvider(remoteRpc);
       const c = peerContract(peerAddr, provider);
       const [owner, peer, opts] = await Promise.all([
         c.owner(),
@@ -131,7 +136,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const readAllPeers = useCallback(
     async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>): Promise<PeerEntry[]> => {
-      const provider = new JsonRpcProvider(homeRpc);
+      const provider = staticProvider(homeRpc);
       const c = adapterContract(bridgeAddr, provider);
       const settled = await Promise.allSettled(eidList.map((item) => c.peers(item.eid)));
       const ZERO = /^0x0+$/;
@@ -229,7 +234,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
 
   const detectOFTType = useCallback(
     async (addr: string, rpc: string): Promise<'adapter' | 'oft'> => {
-      const provider = new JsonRpcProvider(rpc);
+      const provider = staticProvider(rpc);
       const c = adapterContract(addr, provider);
       const tokenAddr = await c.token();
       return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';

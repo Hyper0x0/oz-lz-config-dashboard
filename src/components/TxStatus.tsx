@@ -2,29 +2,45 @@ import type { TxState } from '@/types';
 
 interface Props {
   state: TxState;
+  /** Base URL for block explorer (e.g. "https://sepolia.arbiscan.io/tx/"). Hash is appended. */
+  explorerUrl?: string;
 }
 
-export function TxStatus({ state }: Props): JSX.Element | null {
+export function TxStatus({ state, explorerUrl }: Props): JSX.Element | null {
   if (state.status === 'idle') return null;
 
-  const styles: Record<string, React.CSSProperties> = {
-    pending: { background: '#1a1a2e', border: '1px solid #4a4a8a', color: '#a0a0ff' },
-    success: { background: '#0a1f0a', border: '1px solid #2a6a2a', color: '#7fff7f' },
-    error: { background: '#1f0a0a', border: '1px solid #6a2a2a', color: '#ff7f7f' },
-  };
+  if (state.status === 'pending') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>
+        <span className="animate-pulse">⏳</span> Transaction pending…
+      </div>
+    );
+  }
 
-  const style = styles[state.status] ?? styles['pending'];
+  if (state.status === 'success') {
+    const url = explorerUrl ? `${explorerUrl}${state.hash}` : null;
+    const lzScanUrl = `https://layerzeroscan.com/tx/${state.hash}`;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
+        <span style={{ color: 'var(--secondary)' }}>✓ Confirmed</span>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer"
+            style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+            View on Explorer ↗
+          </a>
+        )}
+        <a href={lzScanUrl} target="_blank" rel="noreferrer"
+          style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+          LayerZero Scan ↗
+        </a>
+      </div>
+    );
+  }
 
+  // error
   return (
-    <div style={{ ...style, padding: '10px 14px', borderRadius: 6, marginTop: 10, fontSize: 13, fontFamily: 'monospace' }}>
-      {state.status === 'pending' && '⏳ Transaction pending…'}
-      {state.status === 'success' && (
-        <span>
-          ✅ Success —{' '}
-          <span style={{ wordBreak: 'break-all' }}>{state.hash}</span>
-        </span>
-      )}
-      {state.status === 'error' && `❌ ${state.message}`}
+    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--error)', lineHeight: 1.5 }}>
+      ✗ {state.message.length > 200 ? state.message.slice(0, 200) + '…' : state.message}
     </div>
   );
 }

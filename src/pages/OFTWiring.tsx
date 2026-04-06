@@ -71,6 +71,8 @@ export function OFTWiring(): JSX.Element {
 
   // EVM-EVM state
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
+  /** Underlying ERC20 token address (read from EVM adapter's token() call) */
+  const [evmUnderlyingToken, setEvmUnderlyingToken] = useState<string | null>(null);
   const [tokenInfoError, setTokenInfoError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<PathwayVerifyResult | null>(null);
@@ -90,28 +92,45 @@ export function OFTWiring(): JSX.Element {
   const starkHome = isStarknet(home) ? home : null;
   const canScanPeers = !!homeAddr && homeAddr !== '0x' && (!!evmHome || !!starkHome);
 
-  // Auto-detect Adapter vs OFT from BOTH addresses
+  // Auto-detect Adapter vs OFT from BOTH addresses (EVM + Starknet)
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
     setDetectedHome(null);
     setDetectedRemote(null);
-    const homeValid = evmHome && isAddr(homeAddr);
-    const remoteValid = evmRemote && isAddr(remoteAddr);
+    const homeValid = isAddr(homeAddr);
+    const remoteValid = isAddr(remoteAddr);
     if (!homeValid && !remoteValid) return;
     clearTimeout(detectTimer.current);
     setDetecting(true);
     detectTimer.current = setTimeout(async () => {
       try {
-        const results = await Promise.allSettled([
-          homeValid ? wiring.detectOFTType(homeAddr, evmHome!.rpc) : Promise.resolve(null),
-          remoteValid ? wiring.detectOFTType(remoteAddr, evmRemote!.rpc) : Promise.resolve(null),
-        ]);
-        const homeType = results[0].status === 'fulfilled' ? results[0].value : null;
-        const remoteType = results[1].status === 'fulfilled' ? results[1].value : null;
+        // Detect home side
+        let homeType: 'adapter' | 'oft' | null = null;
+        if (evmHome && homeValid) {
+          homeType = await wiring.detectOFTType(homeAddr, evmHome.rpc).catch(() => null);
+        } else if (starkHome && homeValid) {
+          const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
+          if (r) {
+            homeType = r.type;
+            if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr); // auto-fill underlying token
+          }
+        }
+        // Detect remote side
+        let remoteType: 'adapter' | 'oft' | null = null;
+        if (evmRemote && remoteValid) {
+          remoteType = await wiring.detectOFTType(remoteAddr, evmRemote.rpc).catch(() => null);
+        } else if (isStarknet(remote) && remoteValid) {
+          const starkRemote = remote as StarknetChain;
+          const r = await cairo.detectCairoOFTType(remoteAddr, starkRemote.rpc).catch(() => null);
+          if (r) {
+            remoteType = r.type;
+            if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr);
+          }
+        }
         setDetectedHome(homeType);
         setDetectedRemote(remoteType);
-        // Set mode based on home detection
         if (homeType) setMode(homeType === 'adapter' ? 'bridge-oft' : 'oft-oft');
+        else if (remoteType) setMode(remoteType === 'adapter' ? 'bridge-oft' : 'oft-oft');
       } catch {
         setDetectedHome(null);
         setDetectedRemote(null);
@@ -120,7 +139,7 @@ export function OFTWiring(): JSX.Element {
       }
     }, 800);
     return () => clearTimeout(detectTimer.current);
-  }, [homeAddr, remoteAddr, evmHome?.rpc, evmRemote?.rpc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [homeAddr, remoteAddr, evmHome?.rpc, evmRemote?.rpc, home.eid, remote.eid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleScanPeers(): Promise<void> {
     if (!canScanPeers) return;
@@ -128,18 +147,17 @@ export function OFTWiring(): JSX.Element {
     setPeers(null);
     setPeersError(null);
     try {
-      const starkEntry = { eid: starkChain(isTestnet).eid, name: starkChain(isTestnet).name };
+      const sc = starkChain(isTestnet);
+      const starkEntry = { eid: sc.eid, name: sc.name, chainKey: sc.chainKey };
       if (evmHome) {
-        // EVM home: call peers(eid) on the EVM adapter for all other EVM chains + Starknet
         const evmEntries = evmChains
           .filter((c) => c.eid !== evmHome.eid)
-          .map((c) => ({ eid: c.eid, name: c.name }));
+          .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
         const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry]);
         setPeers(result);
       } else if (starkHome) {
-        // Starknet home: call get_peer(eid) on the Cairo OFT for all EVM chains
         const evmEntries = evmChains
-          .map((c) => ({ eid: c.eid, name: c.name }));
+          .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
         const result = await cairo.readAllPeers(homeAddr, evmEntries, starkHome.rpc);
         setPeers(result);
       }
@@ -170,6 +188,11 @@ export function OFTWiring(): JSX.Element {
     return evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
   }
 
+  function walletProviderForRemote() {
+    if (!evmRemote) return undefined;
+    return evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
+  }
+
   async function handleFetch(): Promise<void> {
     setFetching(true);
     setTokenInfo(null);
@@ -185,9 +208,60 @@ export function OFTWiring(): JSX.Element {
         setTokenInfoError('Could not read token names: ' + (e instanceof Error ? e.message : String(e)));
       }
     } else if (hasStarknet) {
-      // Starknet: trigger verify in StarknetVerifyPanel
-      setTab('verify');
-      setStarkFetchTick((t) => t + 1);
+      // Mixed pathway: read from both sides
+      const evmSide = evmHome ?? evmRemote;
+      const evmAddr = evmHome ? homeAddr : remoteAddr;
+      const starkAddr = isStarknet(home) ? homeAddr : remoteAddr;
+      const starkData = isStarknet(home) ? (home as StarknetChain) : (remote as StarknetChain);
+      const isEvmAdapter = mode === 'bridge-oft';
+
+      // Read EVM side info
+      let evmName: { name: string; symbol: string } | null = null;
+      if (evmSide && isAddr(evmAddr)) {
+        try { evmName = await wiring.readEvmSideInfo(evmAddr, evmSide.rpc, isEvmAdapter); } catch { /* */ }
+      }
+
+      // Read Starknet side: try token() first (adapter), then read name from underlying ERC20
+      let starkName: { name: string; symbol: string } | null = null;
+      let starkUnderlying: string | null = null;
+      if (isAddr(starkAddr)) {
+        try {
+          // Check if adapter (has token())
+          const detect = await cairo.detectCairoOFTType(starkAddr, starkData.rpc);
+          if (detect.type === 'adapter' && detect.tokenAddr) {
+            starkUnderlying = detect.tokenAddr;
+            setEvmUnderlyingToken(detect.tokenAddr);
+            // Read name from underlying ERC20 token
+            starkName = await cairo.readCairoTokenInfo(detect.tokenAddr, starkData.rpc);
+          } else {
+            // Plain OFT — read name from the OFT itself
+            starkName = await cairo.readCairoTokenInfo(starkAddr, starkData.rpc);
+          }
+        } catch {
+          try { starkName = await cairo.readCairoTokenInfo(starkAddr, starkData.rpc); } catch { /* */ }
+        }
+      }
+
+      // Also read underlying from EVM adapter if applicable
+      if (isEvmAdapter && evmSide && isAddr(evmAddr) && !evmUnderlyingToken) {
+        try {
+          const { Contract: EContract, JsonRpcProvider: EProvider } = await import('ethers');
+          const p = new EProvider(evmSide.rpc);
+          const c = new EContract(evmAddr, (await import('@/abis/evm/OFTAdapter.json')).default, p);
+          const tokenAddr = await c.token() as string;
+          setEvmUnderlyingToken(tokenAddr);
+        } catch { /* not an adapter */ }
+      }
+
+      const starkLabel = starkName ? `${starkName.name}${starkName.symbol ? ` (${starkName.symbol})` : ''}` : '(Starknet OFT)';
+      const evmLabel = evmName ? evmName.name : '(EVM OFT)';
+      const evmSymbol = evmName?.symbol ?? '';
+
+      if (isStarknet(home)) {
+        setTokenInfo({ tokenName: starkLabel, tokenSymbol: starkName?.symbol ?? '', peerName: evmLabel, peerSymbol: evmSymbol });
+      } else {
+        setTokenInfo({ tokenName: evmLabel, tokenSymbol: evmSymbol, peerName: starkLabel, peerSymbol: starkName?.symbol ?? '' });
+      }
     }
 
     setFetching(false);
@@ -197,7 +271,7 @@ export function OFTWiring(): JSX.Element {
     if (!bothEvm || !evmHome || !evmRemote) return;
     setVerifying(true);
     setVerifyResult(null);
-    const result = await verify({ adapterAddr: homeAddr, peerAddr: remoteAddr, homeChain: evmHome, remoteChain: evmRemote, walletProvider: walletProviderForHome() });
+    const result = await verify({ adapterAddr: homeAddr, peerAddr: remoteAddr, homeChain: evmHome, remoteChain: evmRemote, walletProvider: walletProviderForHome(), remoteWalletProvider: walletProviderForRemote() });
     setVerifyResult(result);
     setVerifying(false);
   }
@@ -246,7 +320,7 @@ export function OFTWiring(): JSX.Element {
                   )}
                 </div>
               )}
-              {!detecting && !detectedHome && !detectedRemote && (
+              {!detecting && (!detectedHome || !detectedRemote || hasStarknet) && (
                 <>
                   <span className="text-xs text-on-surface-variant">Type:</span>
                   <button
@@ -326,12 +400,12 @@ export function OFTWiring(): JSX.Element {
             )}
           </div>
 
-          {/* Token banner (EVM-EVM only) */}
+          {/* Token banner */}
           {tokenInfo && (
             <div className="token-banner">
-              <TokenBadge label={`${homeLabel} locks`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
+              <TokenBadge label={`Home (${home.name})`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
               <span style={{ color: '#444', fontSize: 18 }}>↔</span>
-              <TokenBadge label="OFT mints" name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
+              <TokenBadge label={`Remote (${remote.name})`} name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
             </div>
           )}
           {tokenInfoError && (
@@ -380,6 +454,7 @@ export function OFTWiring(): JSX.Element {
                 mode={mode} evm={evm} stark={stark}
                 wiring={wiring} cairo={cairo}
                 isTestnet={isTestnet}
+                evmUnderlyingToken={evmUnderlyingToken}
               />
             )}
           </>
@@ -642,16 +717,6 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchTick]);
 
-  // Auto-run checks (debounced) when addresses or chain EIDs change
-  const autoCheckTimer = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    if (!isAddr(cairoAddr) || !isAddr(evmAddr)) return;
-    clearTimeout(autoCheckTimer.current);
-    autoCheckTimer.current = setTimeout(() => { void runChecks(); }, 1500);
-    return () => clearTimeout(autoCheckTimer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cairoAddr, evmAddr, home.eid, remote.eid]);
-
   async function runChecks(): Promise<void> {
     if (!isAddr(cairoAddr) || !isAddr(evmAddr)) return;
     setChecking(true); setError(null); setEvmState(null); setStarkState(null);
@@ -713,10 +778,34 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
       )}
       {error && <div className="check-row check-critical"><span>{error}</span></div>}
 
-      {/* ── EVM side ── */}
+      {/* ── Summary grid (same layout as EVM-EVM) ── */}
+      {(evmState || starkState) && (
+        <>
+          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-2">
+            EVM → Starknet ({evmChainData.name} → {starkChainData.name})
+          </div>
+          <div className="verify-summary">
+            <SummaryItem label="Send lib (EVM)" value={evmState?.sendLib ?? '—'} />
+            <SummaryItem label="Recv lib (SN)" value={starkState?.recvLib ?? '—'} />
+            <SummaryItem label="Executor" value={evmState?.executor?.executor ?? '—'} />
+            <SummaryItem label="DVNs (send)" value={evmState?.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount} DVN(s)` : '—'} />
+          </div>
+          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-3">
+            Starknet → EVM ({starkChainData.name} → {evmChainData.name})
+          </div>
+          <div className="verify-summary">
+            <SummaryItem label="Send lib (SN)" value={starkState?.sendLib ?? '—'} />
+            <SummaryItem label="Recv lib (EVM)" value={evmState?.recvLib ?? '—'} />
+            <SummaryItem label="Delegate (SN)" value={starkState?.delegate ?? '—'} />
+            <SummaryItem label="DVNs (recv)" value={evmState?.dvnRecv?.requiredDVNCount ? `${evmState.dvnRecv.requiredDVNCount} DVN(s)` : '—'} />
+          </div>
+        </>
+      )}
+
+      {/* ── EVM side checks ── */}
       {evmState && (
         <>
-          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant mt-3 mb-1">
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-on-surface-variant mt-4 mb-1">
             {evmChainData.name} (send → Starknet)
           </div>
           <CheckRow label="Send library set" passed={!!evmState.sendLib && evmState.sendLib !== '0x0000000000000000000000000000000000000000'} detail={evmState.sendLib ?? 'Not set'} />
@@ -737,10 +826,10 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
         </>
       )}
 
-      {/* ── Starknet side ── */}
+      {/* ── Starknet side checks ── */}
       {starkState && (
         <>
-          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-tertiary mt-3 mb-1">
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-tertiary mt-4 mb-1">
             {starkChainData.name} (send → EVM)
           </div>
           <CheckRow label="Send library set" passed={!!starkState.sendLib} detail={starkState.sendLib ?? 'Not set'} />
@@ -764,7 +853,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
 
 // ── Send Panel ───────────────────────────────────────────────────────────────
 
-function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet }: {
+function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet, evmUnderlyingToken }: {
   home: AnyChain; remote: AnyChain;
   homeAddr: string; remoteAddr: string;
   mode: WiringMode;
@@ -773,12 +862,22 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
   wiring: ReturnType<typeof useOFTWiring>;
   cairo: ReturnType<typeof useCairoOFT>;
   isTestnet: boolean;
+  evmUnderlyingToken?: string | null;
 }): JSX.Element {
   const isAdapter = mode === 'bridge-oft';
   const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [slippage, setSlippage] = useState('5');
+  /** For Starknet adapters: underlying ERC20 token address (needed for approval). Auto-populated from EVM adapter token(). */
+  const [starkTokenAddr, setStarkTokenAddr] = useState(evmUnderlyingToken ?? '');
+  /** Starknet fee token (ETH by default on Sepolia/Mainnet) */
+  const [starkFeeToken, setStarkFeeToken] = useState('0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'); // STRK on Starknet
+
+  // Auto-populate underlying token from EVM adapter when available
+  useEffect(() => {
+    if (evmUnderlyingToken && !starkTokenAddr) setStarkTokenAddr(evmUnderlyingToken);
+  }, [evmUnderlyingToken]); // eslint-disable-line
 
   // Send state
   const [quoting, setQuoting] = useState(false);
@@ -869,7 +968,9 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
     setSendTx({ status: 'pending' });
     try {
       if (srcIsStark) {
-        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee));
+        const tokenAddr = isAdapter && starkTokenAddr ? starkTokenAddr : undefined;
+        const feeToken = starkFeeToken || undefined;
+        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee, tokenAddr, feeToken));
       } else {
         setSendTx(await wiring.evmSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD, quotedFee));
       }
@@ -915,9 +1016,28 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
         </div>
       </div>
 
-      <div className="mb-4">
-        <div className="label">Slippage tolerance (%)</div>
-        <input className="input w-[80px]" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+      <div className="form-grid mb-3">
+        <div>
+          <div className="label">Slippage tolerance (%)</div>
+          <input className="input w-[80px]" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+        </div>
+        {srcIsStark && (
+          <div>
+            <div className="label">Fee token address (STRK default)</div>
+            <input className="input" value={starkFeeToken} onChange={(e) => setStarkFeeToken(e.target.value)}
+              placeholder="0x… STRK on Starknet" spellCheck={false} />
+            <div className="text-[11px] text-[var(--text-muted)] mt-1">
+              Fee approval is bundled with the send tx.
+            </div>
+          </div>
+        )}
+        {srcIsStark && isAdapter && (
+          <div>
+            <div className="label">Underlying token address (adapter lockbox)</div>
+            <input className="input" value={starkTokenAddr} onChange={(e) => setStarkTokenAddr(e.target.value)}
+              placeholder="0x… (required for adapter approval)" spellCheck={false} />
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -1073,33 +1193,32 @@ function PeerRow({ entry }: { entry: PeerEntry }): JSX.Element {
   const isSet = entry.peer !== null;
   const isStarknetEid = entry.eid === 40500 || entry.eid === 30500;
 
-  // Decode peer address for display
   let displayPeer = entry.peer ?? '—';
   if (isSet && isStarknetEid && entry.peer) {
-    // Starknet felt: bytes32 → trim leading zeros for felt
     const felt = BigInt(entry.peer);
     displayPeer = '0x' + felt.toString(16);
   } else if (isSet && entry.peer) {
-    // EVM: last 20 bytes = address
     displayPeer = '0x' + entry.peer.slice(-40);
   }
+
+  const snMonogram = <span className="w-[16px] h-[16px] rounded-full bg-[#919bff22] border border-[#919bff55] flex-shrink-0 inline-flex items-center justify-center text-[8px] text-[#919bff] font-bold">SN</span>;
 
   return (
     <div className={`flex flex-col gap-0.5 p-2 mb-1.5 rounded-lg border ${isSet ? 'bg-secondary/5 border-secondary/20' : 'bg-surface-container border-outline-variant/10 opacity-40'}`}>
       <div className="flex items-center justify-between">
         <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${isSet ? 'text-on-surface' : 'text-on-surface-variant'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSet ? 'bg-secondary' : 'bg-outline-variant'}`}></span>
+          {isStarknetEid ? snMonogram : entry.chainKey ? <ChainIcon chainKey={entry.chainKey} size={16} /> : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSet ? 'bg-secondary' : 'bg-outline-variant'}`} />}
           {entry.name}
         </span>
         <span className="text-[10px] text-on-surface-variant">EID {entry.eid}</span>
       </div>
       {isSet && (
-        <div className="font-mono text-[11px] text-secondary break-all">
+        <div className="font-mono text-[11px] text-secondary break-all pl-[22px]">
           {displayPeer.slice(0, 14)}…{displayPeer.slice(-8)}
         </div>
       )}
       {entry.error && (
-        <div className="text-[10px] text-error">read error</div>
+        <div className="text-[10px] text-error pl-[22px]">read error</div>
       )}
     </div>
   );

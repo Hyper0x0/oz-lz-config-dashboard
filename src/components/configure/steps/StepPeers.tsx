@@ -3,6 +3,7 @@ import { TxStatus } from '@/components/TxStatus';
 import { isStarknet } from '@/config/lzCatalog';
 import type { TxState } from '@/types';
 import type { StepProps } from '../types';
+import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 function addrToBytes32(addr: string): string {
@@ -75,7 +76,7 @@ export function StepPeers({ home, remote, hooks, verifyResult, onTxSuccess }: St
             onClick={handleHome}>
             Set Peer on {home.chainLabel}
           </button>
-          <div className="mt-1.5"><TxStatus state={homeTx} /></div>
+          <div className="mt-1.5"><TxStatus state={homeTx} explorerUrl={explorerTxUrl(home)} /></div>
         </div>
         <div>
           <NetworkHint side={remote} />
@@ -84,7 +85,7 @@ export function StepPeers({ home, remote, hooks, verifyResult, onTxSuccess }: St
             onClick={handleRemote}>
             Set Peer on {remote.chainLabel}
           </button>
-          <div className="mt-1.5"><TxStatus state={remoteTx} /></div>
+          <div className="mt-1.5"><TxStatus state={remoteTx} explorerUrl={explorerTxUrl(remote)} /></div>
         </div>
       </div>
     </div>

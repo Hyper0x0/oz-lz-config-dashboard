@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { TxStatus } from '@/components/TxStatus';
 import type { TxState } from '@/types';
 import type { StepProps } from '../types';
+import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
@@ -56,7 +57,7 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
           <NetworkHint side={home} />
           <button className="btn btn-primary" disabled={!home.isConnected || home.needsNetworkSwitch}
             onClick={handleHome}>Set on {home.chainLabel}</button>
-          <div className="mt-1.5"><TxStatus state={homeTx} /></div>
+          <div className="mt-1.5"><TxStatus state={homeTx} explorerUrl={explorerTxUrl(home)} /></div>
         </div>
 
         {/* Remote side */}
@@ -70,7 +71,7 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
           <NetworkHint side={remote} />
           <button className="btn btn-primary" disabled={!remote.isConnected || remote.needsNetworkSwitch}
             onClick={handleRemote}>Set on {remote.chainLabel}</button>
-          <div className="mt-1.5"><TxStatus state={remoteTx} /></div>
+          <div className="mt-1.5"><TxStatus state={remoteTx} explorerUrl={explorerTxUrl(remote)} /></div>
         </div>
       </div>
     </div>

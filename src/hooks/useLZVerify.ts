@@ -1,5 +1,14 @@
 import { useCallback } from 'react';
-import { Contract, JsonRpcProvider, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress } from 'ethers';
+import { Contract, JsonRpcProvider, FetchRequest, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress } from 'ethers';
+
+/**
+ * Create a JsonRpcProvider with:
+ * - Batching disabled (avoids free-tier batch limits like DRPC's 3-request max)
+ * - staticNetwork set to 'any' to skip auto-detection (avoids retry loops on slow RPCs)
+ */
+function unbatchedProvider(rpc: string): JsonRpcProvider {
+  return new JsonRpcProvider(rpc, undefined, { batchMaxCount: 1, staticNetwork: true });
+}
 import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
@@ -50,16 +59,24 @@ function decodeExecutor(raw: string): ExecutorConfig | null {
   }
 }
 
-/** Retry fn with fallback RPC when primary fails. */
+/** Race a promise against a timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms / 1000}s — ${label}`)), ms)),
+  ]);
+}
+
+/** Retry fn with fallback RPC when primary fails. Adds 15s timeout per attempt. */
 async function withFallbackRpc<T>(
   primary: string,
   fallback: string | undefined,
   fn: (rpc: string) => Promise<T>,
 ): Promise<T> {
   try {
-    return await fn(primary);
+    return await withTimeout(fn(primary), 15_000, 'primary RPC');
   } catch (err) {
-    if (fallback) return fn(fallback);
+    if (fallback) return withTimeout(fn(fallback), 15_000, 'fallback RPC');
     throw err;
   }
 }
@@ -296,6 +313,49 @@ function buildChecks(r: Omit<PathwayVerifyResult, 'checks' | 'error'>): VerifyCh
     severity: 'warning',
   });
 
+  // B→A DVN count symmetry (send-side B→A vs receive-side B→A)
+  if (remoteSendDvnOk && homeRecvDvnOk) {
+    const baSendCount = r.remoteSendDVN!.requiredDVNCount;
+    const baRecvCount = r.homeReceiveDVN!.requiredDVNCount;
+    const baMatch = baSendCount === baRecvCount;
+    checks.push({
+      label: 'DVN count matches (B→A send ↔ receive)',
+      passed: baMatch,
+      detail: baMatch
+        ? `Both B→A sides have ${baSendCount} required DVN(s).`
+        : `B→A send: ${baSendCount} — B→A receive: ${baRecvCount}. Counts should match.`,
+      severity: baMatch ? 'info' : 'warning',
+    });
+  }
+
+  // Production: DVN count ≥ 2 on remote send side
+  if (remoteSendDvnOk && r.remoteSendDVN!.requiredDVNCount < 2) {
+    checks.push({
+      label: 'DVN count ≥ 2 B→A (mainnet recommendation)',
+      passed: false,
+      detail: `Only ${r.remoteSendDVN!.requiredDVNCount} DVN on remote send side. Use ≥ 2 for mainnet.`,
+      severity: 'warning',
+    });
+  }
+
+  // Reliance on default libraries warning
+  if (r.remoteReceiveLibIsDefault) {
+    checks.push({
+      label: 'Receive library using defaults (A→B)',
+      passed: false,
+      detail: 'Receive library falls back to default. Set explicitly for production — defaults may change or be misconfigured.',
+      severity: 'warning',
+    });
+  }
+  if (r.homeReceiveLibIsDefault) {
+    checks.push({
+      label: 'Receive library using defaults (B→A)',
+      passed: false,
+      detail: 'Home receive library falls back to default. Set explicitly for production.',
+      severity: 'warning',
+    });
+  }
+
   return checks;
 }
 
@@ -318,6 +378,8 @@ export interface VerifyParams {
   remoteChain: LZChain;
   /** When provided, used instead of homeChain.rpc for home-side reads */
   walletProvider?: BrowserProvider;
+  /** When provided, used instead of remoteChain.rpc for remote-side reads */
+  remoteWalletProvider?: BrowserProvider;
 }
 
 export function useLZVerify() {
@@ -328,7 +390,7 @@ export function useLZVerify() {
     // ── EID support check — each chain independently ────────────────────────
     try {
       await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
-        const provider = p.walletProvider ?? new JsonRpcProvider(rpc);
+        const provider = p.walletProvider ?? unbatchedProvider(rpc);
         const homeEp = endpointContract(p.homeChain.endpoint, provider);
         partial.remoteEidSupported = await homeEp.isSupportedEid(p.remoteChain.eid);
       });
@@ -339,7 +401,8 @@ export function useLZVerify() {
 
     try {
       await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
-        const remoteEp = endpointContract(p.remoteChain.endpoint, new JsonRpcProvider(rpc));
+        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc);
+        const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
         partial.homeEidSupported = await remoteEp.isSupportedEid(p.homeChain.eid);
       });
     } catch (err) {
@@ -350,7 +413,7 @@ export function useLZVerify() {
     // ── Home side reads (A→B send + B→A receive) ─────────────────────────
     try {
       await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
-        const provider = p.walletProvider ?? new JsonRpcProvider(rpc);
+        const provider = p.walletProvider ?? unbatchedProvider(rpc);
         const homeEp = endpointContract(p.homeChain.endpoint, provider);
         const adapter = new Contract(p.adapterAddr, OFTAdapterABI, provider) as unknown as IOFTAdapter;
 
@@ -400,7 +463,7 @@ export function useLZVerify() {
     // ── Remote side reads (A→B receive + B→A send) ──────────────────────
     try {
       await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
-        const provider = new JsonRpcProvider(rpc);
+        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc);
         const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
         const peer = new Contract(p.peerAddr, OFTABI, provider) as unknown as IOFTPeer;
 
@@ -454,6 +517,7 @@ export function useLZVerify() {
     evmOftAddr: string,
     remoteEid: number,
     chain: LZChain,
+    walletProvider?: BrowserProvider,
   ): Promise<{
     sendLib: string | null;
     recvLib: string | null;
@@ -471,7 +535,7 @@ export function useLZVerify() {
       enforcedOptions: null, peer: null,
     };
     try {
-      const provider = new JsonRpcProvider(chain.rpc);
+      const provider = walletProvider ?? new JsonRpcProvider(chain.rpc);
       const ep = endpointContract(chain.endpoint, provider);
       const oft = new Contract(evmOftAddr, OFTABI, provider) as unknown as IOFTPeer;
 

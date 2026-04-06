@@ -1,135 +1,97 @@
 [
-  {
-    "type": "struct",
-    "name": "lz_utils::bytes::Bytes32",
-    "members": [
-      { "name": "value", "type": "core::integer::u256" }
-    ]
-  },
-  {
-    "type": "struct",
-    "name": "core::integer::u256",
-    "members": [
-      { "name": "low",  "type": "core::integer::u128" },
-      { "name": "high", "type": "core::integer::u128" }
-    ]
-  },
-  {
-    "type": "struct",
-    "name": "layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam",
-    "members": [
-      { "name": "eid",      "type": "core::integer::u32" },
-      { "name": "msg_type", "type": "core::integer::u16" },
-      { "name": "options",  "type": "core::byte_array::ByteArray" }
-    ]
-  },
-  {
-    "type": "function",
-    "name": "set_peer",
-    "inputs": [
-      { "name": "eid",  "type": "core::integer::u32" },
-      { "name": "peer", "type": "lz_utils::bytes::Bytes32" }
-    ],
-    "outputs": [],
-    "state_mutability": "external"
-  },
-  {
-    "type": "function",
-    "name": "get_peer",
-    "inputs": [
-      { "name": "eid", "type": "core::integer::u32" }
-    ],
-    "outputs": [
-      { "type": "lz_utils::bytes::Bytes32" }
-    ],
-    "state_mutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "set_enforced_options",
-    "inputs": [
-      {
-        "name": "params",
-        "type": "core::array::Array::<layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam>"
-      }
-    ],
-    "outputs": [],
-    "state_mutability": "external"
-  },
-  {
-    "type": "function",
-    "name": "get_enforced_options",
-    "inputs": [
-      { "name": "dst_eid",  "type": "core::integer::u32" },
-      { "name": "msg_type", "type": "core::integer::u16" }
-    ],
-    "outputs": [
-      { "type": "core::byte_array::ByteArray" }
-    ],
-    "state_mutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "set_delegate",
-    "inputs": [
-      { "name": "delegate", "type": "core::starknet::contract_address::ContractAddress" }
-    ],
-    "outputs": [],
-    "state_mutability": "external"
-  },
-  {
-    "type": "struct",
-    "name": "layerzero::oapps::oft::oft::SendParam",
-    "members": [
-      { "name": "dst_eid",       "type": "core::integer::u32" },
-      { "name": "to",            "type": "lz_utils::bytes::Bytes32" },
-      { "name": "amount_ld",     "type": "core::integer::u256" },
-      { "name": "min_amount_ld", "type": "core::integer::u256" },
-      { "name": "extra_options", "type": "core::byte_array::ByteArray" },
-      { "name": "compose_msg",   "type": "core::byte_array::ByteArray" },
-      { "name": "oft_cmd",       "type": "core::byte_array::ByteArray" }
-    ]
-  },
-  {
-    "type": "struct",
-    "name": "layerzero::oapps::oft::oft::MessagingFee",
-    "members": [
-      { "name": "native_fee",   "type": "core::integer::u256" },
-      { "name": "lz_token_fee", "type": "core::integer::u256" }
-    ]
-  },
-  {
-    "type": "function",
-    "name": "quote_send",
-    "inputs": [
-      { "name": "send_param",      "type": "layerzero::oapps::oft::oft::SendParam" },
-      { "name": "pay_in_lz_token", "type": "core::bool" }
-    ],
-    "outputs": [
-      { "type": "layerzero::oapps::oft::oft::MessagingFee" }
-    ],
-    "state_mutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "send",
-    "inputs": [
-      { "name": "send_param",     "type": "layerzero::oapps::oft::oft::SendParam" },
-      { "name": "fee",            "type": "layerzero::oapps::oft::oft::MessagingFee" },
-      { "name": "refund_address", "type": "core::starknet::contract_address::ContractAddress" }
-    ],
-    "outputs": [],
-    "state_mutability": "external"
-  },
-  {
-    "type": "function",
-    "name": "balance_of",
-    "inputs": [
-      { "name": "account", "type": "core::starknet::contract_address::ContractAddress" }
-    ],
-    "outputs": [
-      { "type": "core::integer::u256" }
-    ],
-    "state_mutability": "view"
-  }
+  {"type":"impl","name":"OFTMintBurnAdapterImpl","interface_name":"oft_mint_burn::interface::IOFTMintBurnAdapter"},
+  {"type":"struct","name":"core::integer::u256","members":[{"name":"low","type":"core::integer::u128"},{"name":"high","type":"core::integer::u128"}]},
+  {"type":"struct","name":"layerzero::oapps::common::rate_limiter::structs::RateLimitConfig","members":[{"name":"dst_eid","type":"core::integer::u32"},{"name":"limit","type":"core::integer::u128"},{"name":"window","type":"core::integer::u64"}]},
+  {"type":"enum","name":"layerzero::oapps::common::rate_limiter::structs::RateLimitDirection","variants":[{"name":"Outbound","type":"()"},{"name":"Inbound","type":"()"}]},
+  {"type":"enum","name":"core::bool","variants":[{"name":"False","type":"()"},{"name":"True","type":"()"}]},
+  {"type":"struct","name":"layerzero::oapps::common::rate_limiter::structs::RateLimitEnabled","members":[{"name":"is_outbound_enabled","type":"core::bool"},{"name":"is_inbound_enabled","type":"core::bool"}]},
+  {"type":"struct","name":"core::array::Span::<core::felt252>","members":[{"name":"snapshot","type":"@core::array::Array::<core::felt252>"}]},
+  {"type":"interface","name":"oft_mint_burn::interface::IOFTMintBurnAdapter","items":[
+    {"type":"function","name":"fee_balance","inputs":[],"outputs":[{"type":"core::integer::u256"}],"state_mutability":"view"},
+    {"type":"function","name":"get_minter_burner","inputs":[],"outputs":[{"type":"core::starknet::contract_address::ContractAddress"}],"state_mutability":"view"},
+    {"type":"function","name":"set_rate_limits","inputs":[{"name":"rate_limits","type":"core::array::Array::<layerzero::oapps::common::rate_limiter::structs::RateLimitConfig>"},{"name":"direction","type":"layerzero::oapps::common::rate_limiter::structs::RateLimitDirection"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"set_rate_limits_enabled","inputs":[{"name":"enabled","type":"layerzero::oapps::common::rate_limiter::structs::RateLimitEnabled"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"reset_rate_limits","inputs":[{"name":"eids","type":"core::array::Array::<core::integer::u32>"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"withdraw_fees","inputs":[{"name":"to","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"upgrade","inputs":[{"name":"new_class_hash","type":"core::starknet::class_hash::ClassHash"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"upgrade_and_call","inputs":[{"name":"new_class_hash","type":"core::starknet::class_hash::ClassHash"},{"name":"selector","type":"core::felt252"},{"name":"calldata","type":"core::array::Span::<core::felt252>"}],"outputs":[{"type":"core::array::Span::<core::felt252>"}],"state_mutability":"external"},
+    {"type":"function","name":"pause","inputs":[],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"unpause","inputs":[],"outputs":[],"state_mutability":"external"}
+  ]},
+  {"type":"impl","name":"AccessControlImpl","interface_name":"openzeppelin_access::accesscontrol::interface::IAccessControl"},
+  {"type":"interface","name":"openzeppelin_access::accesscontrol::interface::IAccessControl","items":[
+    {"type":"function","name":"has_role","inputs":[{"name":"role","type":"core::felt252"},{"name":"account","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[{"type":"core::bool"}],"state_mutability":"view"},
+    {"type":"function","name":"get_role_admin","inputs":[{"name":"role","type":"core::felt252"}],"outputs":[{"type":"core::felt252"}],"state_mutability":"view"},
+    {"type":"function","name":"grant_role","inputs":[{"name":"role","type":"core::felt252"},{"name":"account","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"revoke_role","inputs":[{"name":"role","type":"core::felt252"},{"name":"account","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"renounce_role","inputs":[{"name":"role","type":"core::felt252"},{"name":"account","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"}
+  ]},
+  {"type":"impl","name":"PausableImpl","interface_name":"openzeppelin_security::interface::IPausable"},
+  {"type":"interface","name":"openzeppelin_security::interface::IPausable","items":[
+    {"type":"function","name":"is_paused","inputs":[],"outputs":[{"type":"core::bool"}],"state_mutability":"view"}
+  ]},
+  {"type":"impl","name":"OwnableMixinImpl","interface_name":"openzeppelin_access::ownable::interface::OwnableABI"},
+  {"type":"interface","name":"openzeppelin_access::ownable::interface::OwnableABI","items":[
+    {"type":"function","name":"owner","inputs":[],"outputs":[{"type":"core::starknet::contract_address::ContractAddress"}],"state_mutability":"view"},
+    {"type":"function","name":"transfer_ownership","inputs":[{"name":"new_owner","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"renounce_ownership","inputs":[],"outputs":[],"state_mutability":"external"}
+  ]},
+  {"type":"impl","name":"OAppCoreImpl","interface_name":"layerzero::oapps::oapp::interface::IOApp"},
+  {"type":"struct","name":"lz_utils::bytes::Bytes32","members":[{"name":"value","type":"core::integer::u256"}]},
+  {"type":"interface","name":"layerzero::oapps::oapp::interface::IOApp","items":[
+    {"type":"function","name":"get_endpoint","inputs":[],"outputs":[{"type":"core::starknet::contract_address::ContractAddress"}],"state_mutability":"view"},
+    {"type":"function","name":"set_peer","inputs":[{"name":"eid","type":"core::integer::u32"},{"name":"peer","type":"lz_utils::bytes::Bytes32"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"get_peer","inputs":[{"name":"eid","type":"core::integer::u32"}],"outputs":[{"type":"lz_utils::bytes::Bytes32"}],"state_mutability":"view"},
+    {"type":"function","name":"oapp_version","inputs":[],"outputs":[{"type":"(core::integer::u64, core::integer::u64)"}],"state_mutability":"view"},
+    {"type":"function","name":"set_delegate","inputs":[{"name":"delegate","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"}
+  ]},
+  {"type":"struct","name":"layerzero::common::structs::packet::Origin","members":[{"name":"src_eid","type":"core::integer::u32"},{"name":"sender","type":"lz_utils::bytes::Bytes32"},{"name":"nonce","type":"core::integer::u64"}]},
+  {"type":"struct","name":"core::byte_array::ByteArray","members":[{"name":"data","type":"core::array::Array::<core::bytes_31::bytes31>"},{"name":"pending_word","type":"core::felt252"},{"name":"pending_word_len","type":"core::internal::bounded_int::BoundedInt::<0, 30>"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTVersion","members":[{"name":"interface_id","type":"core::integer::u32"},{"name":"version","type":"core::integer::u64"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::SendParam","members":[{"name":"dst_eid","type":"core::integer::u32"},{"name":"to","type":"lz_utils::bytes::Bytes32"},{"name":"amount_ld","type":"core::integer::u256"},{"name":"min_amount_ld","type":"core::integer::u256"},{"name":"extra_options","type":"core::byte_array::ByteArray"},{"name":"compose_msg","type":"core::byte_array::ByteArray"},{"name":"oft_cmd","type":"core::byte_array::ByteArray"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTLimit","members":[{"name":"min_amount_ld","type":"core::integer::u256"},{"name":"max_amount_ld","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTFeeDetail","members":[{"name":"fee_amount_ld","type":"core::integer::u256"},{"name":"reward_amount_ld","type":"core::integer::u256"},{"name":"description","type":"core::byte_array::ByteArray"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTReceipt","members":[{"name":"amount_sent_ld","type":"core::integer::u256"},{"name":"amount_received_ld","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTQuote","members":[{"name":"limit","type":"layerzero::oapps::oft::structs::OFTLimit"},{"name":"oft_fee_details","type":"core::array::Array::<layerzero::oapps::oft::structs::OFTFeeDetail>"},{"name":"receipt","type":"layerzero::oapps::oft::structs::OFTReceipt"}]},
+  {"type":"struct","name":"layerzero::common::structs::messaging::MessagingFee","members":[{"name":"native_fee","type":"core::integer::u256"},{"name":"lz_token_fee","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::common::structs::messaging::Payee","members":[{"name":"receiver","type":"core::starknet::contract_address::ContractAddress"},{"name":"native_amount","type":"core::integer::u256"},{"name":"lz_token_amount","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::common::structs::messaging::MessageReceipt","members":[{"name":"guid","type":"lz_utils::bytes::Bytes32"},{"name":"nonce","type":"core::integer::u64"},{"name":"payees","type":"core::array::Array::<layerzero::common::structs::messaging::Payee>"}]},
+  {"type":"struct","name":"layerzero::oapps::oft::structs::OFTSendResult","members":[{"name":"message_receipt","type":"layerzero::common::structs::messaging::MessageReceipt"},{"name":"oft_receipt","type":"layerzero::oapps::oft::structs::OFTReceipt"}]},
+  {"type":"interface","name":"layerzero::oapps::oft::interface::IOFT","items":[
+    {"type":"function","name":"oft_version","inputs":[],"outputs":[{"type":"layerzero::oapps::oft::structs::OFTVersion"}],"state_mutability":"view"},
+    {"type":"function","name":"token","inputs":[],"outputs":[{"type":"core::starknet::contract_address::ContractAddress"}],"state_mutability":"view"},
+    {"type":"function","name":"approval_required","inputs":[],"outputs":[{"type":"core::bool"}],"state_mutability":"view"},
+    {"type":"function","name":"shared_decimals","inputs":[],"outputs":[{"type":"core::integer::u8"}],"state_mutability":"view"},
+    {"type":"function","name":"decimal_conversion_rate","inputs":[],"outputs":[{"type":"core::integer::u256"}],"state_mutability":"view"},
+    {"type":"function","name":"msg_inspector","inputs":[],"outputs":[{"type":"core::starknet::contract_address::ContractAddress"}],"state_mutability":"view"},
+    {"type":"function","name":"set_msg_inspector","inputs":[{"name":"msg_inspector","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"quote_oft","inputs":[{"name":"send_param","type":"layerzero::oapps::oft::structs::SendParam"}],"outputs":[{"type":"layerzero::oapps::oft::structs::OFTQuote"}],"state_mutability":"view"},
+    {"type":"function","name":"quote_send","inputs":[{"name":"send_param","type":"layerzero::oapps::oft::structs::SendParam"},{"name":"pay_in_lz_token","type":"core::bool"}],"outputs":[{"type":"layerzero::common::structs::messaging::MessagingFee"}],"state_mutability":"view"},
+    {"type":"function","name":"send","inputs":[{"name":"send_param","type":"layerzero::oapps::oft::structs::SendParam"},{"name":"fee","type":"layerzero::common::structs::messaging::MessagingFee"},{"name":"refund_address","type":"core::starknet::contract_address::ContractAddress"}],"outputs":[{"type":"layerzero::oapps::oft::structs::OFTSendResult"}],"state_mutability":"external"}
+  ]},
+  {"type":"struct","name":"layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam","members":[{"name":"eid","type":"core::integer::u32"},{"name":"msg_type","type":"core::integer::u16"},{"name":"options","type":"core::byte_array::ByteArray"}]},
+  {"type":"interface","name":"layerzero::oapps::common::oapp_options_type_3::interface::IOAppOptionsType3","items":[
+    {"type":"function","name":"set_enforced_options","inputs":[{"name":"enforced_options","type":"core::array::Array::<layerzero::oapps::common::oapp_options_type_3::structs::EnforcedOptionParam>"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"combine_options","inputs":[{"name":"eid","type":"core::integer::u32"},{"name":"msg_type","type":"core::integer::u16"},{"name":"extra_options","type":"core::byte_array::ByteArray"}],"outputs":[{"type":"core::byte_array::ByteArray"}],"state_mutability":"view"},
+    {"type":"function","name":"get_enforced_options","inputs":[{"name":"eid","type":"core::integer::u32"},{"name":"msg_type","type":"core::integer::u16"}],"outputs":[{"type":"core::byte_array::ByteArray"}],"state_mutability":"view"}
+  ]},
+  {"type":"struct","name":"layerzero::oapps::common::fee::structs::FeeConfig","members":[{"name":"fee_bps","type":"core::integer::u16"},{"name":"enabled","type":"core::bool"}]},
+  {"type":"interface","name":"layerzero::oapps::common::fee::interface::IFee","items":[
+    {"type":"function","name":"set_default_fee_bps","inputs":[{"name":"fee_bps","type":"core::integer::u16"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"set_fee_bps","inputs":[{"name":"dst_eid","type":"core::integer::u32"},{"name":"fee_bps","type":"core::integer::u16"},{"name":"enabled","type":"core::bool"}],"outputs":[],"state_mutability":"external"},
+    {"type":"function","name":"get_fee","inputs":[{"name":"dst_eid","type":"core::integer::u32"},{"name":"amount","type":"core::integer::u256"}],"outputs":[{"type":"core::integer::u256"}],"state_mutability":"view"},
+    {"type":"function","name":"get_raw_fee_bps","inputs":[{"name":"dst_eid","type":"core::integer::u32"}],"outputs":[{"type":"layerzero::oapps::common::fee::structs::FeeConfig"}],"state_mutability":"view"},
+    {"type":"function","name":"get_raw_default_fee_bps","inputs":[],"outputs":[{"type":"core::integer::u16"}],"state_mutability":"view"},
+    {"type":"function","name":"get_raw_bps_denominator","inputs":[],"outputs":[{"type":"core::integer::u16"}],"state_mutability":"view"}
+  ]},
+  {"type":"struct","name":"layerzero::oapps::common::rate_limiter::structs::SendableAmount","members":[{"name":"amount_in_flight","type":"core::integer::u256"},{"name":"sendable_amount","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::oapps::common::rate_limiter::structs::ReceivableAmount","members":[{"name":"amount_in_flight","type":"core::integer::u256"},{"name":"receivable_amount","type":"core::integer::u256"}]},
+  {"type":"struct","name":"layerzero::oapps::common::rate_limiter::structs::RateLimit","members":[{"name":"amount_in_flight","type":"core::integer::u128"},{"name":"last_updated","type":"core::integer::u64"},{"name":"limit","type":"core::integer::u128"},{"name":"window","type":"core::integer::u64"}]},
+  {"type":"interface","name":"layerzero::oapps::common::rate_limiter::interface::IRateLimiter","items":[
+    {"type":"function","name":"get_sendable_amount","inputs":[{"name":"dst_eid","type":"core::integer::u32"}],"outputs":[{"type":"layerzero::oapps::common::rate_limiter::structs::SendableAmount"}],"state_mutability":"view"},
+    {"type":"function","name":"get_receivable_amount","inputs":[{"name":"src_eid","type":"core::integer::u32"}],"outputs":[{"type":"layerzero::oapps::common::rate_limiter::structs::ReceivableAmount"}],"state_mutability":"view"},
+    {"type":"function","name":"get_outbound_rate_limit","inputs":[{"name":"dst_eid","type":"core::integer::u32"}],"outputs":[{"type":"layerzero::oapps::common::rate_limiter::structs::RateLimit"}],"state_mutability":"view"},
+    {"type":"function","name":"get_inbound_rate_limit","inputs":[{"name":"src_eid","type":"core::integer::u32"}],"outputs":[{"type":"layerzero::oapps::common::rate_limiter::structs::RateLimit"}],"state_mutability":"view"},
+    {"type":"function","name":"get_rate_limit_enabled","inputs":[],"outputs":[{"type":"layerzero::oapps::common::rate_limiter::structs::RateLimitEnabled"}],"state_mutability":"view"}
+  ]}
 ]
