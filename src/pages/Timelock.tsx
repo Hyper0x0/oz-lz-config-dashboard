@@ -342,9 +342,6 @@ export function Timelock(): JSX.Element {
             {evm.isConnected && walletChain && !manualChainId && (
               <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
             )}
-            {!evm.isConnected && (
-              <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
-            )}
             <div className="ml-auto flex items-center gap-2">
               <select className="input text-xs w-44" value={activeChainId}
                 onChange={(e) => setManualChainId(Number(e.target.value))}>
@@ -531,7 +528,6 @@ export function Timelock(): JSX.Element {
                   <div className="flex flex-col gap-1">
                     <button className="btn btn-primary" onClick={handleExecute}
                       disabled={!evm.isConnected || !derivedCalldata}>Execute</button>
-                    {!evm.isConnected && <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect Wallet</button>}
                     {evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
                   </div>
                 )}
@@ -732,9 +728,6 @@ function RoleManagement({ timelockAddr, ops, evm }: {
       }>
       {roleError && <div className="text-xs text-error mb-3">{roleError}</div>}
 
-      {!evm.isConnected && (
-        <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect Wallet to Check Roles</button>
-      )}
 
       {walletRoles && (
         <>

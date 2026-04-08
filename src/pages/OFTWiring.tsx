@@ -6,18 +6,13 @@ import { useLZChains } from '@/hooks/useLZChains';
 import { useCairoOFT } from '@/hooks/useCairoOFT';
 import { useCairoEndpoint } from '@/hooks/useCairoEndpoint';
 import { useDVNCatalog } from '@/hooks/useDVNCatalog';
-import { useEvmWallet } from '@/hooks/useEvmWallet';
-import { useStarknetWallet } from '@/hooks/useStarknetWallet';
-import { TxStatus } from '@/components/TxStatus';
-import { Section } from '@/components/Section';
 import { ConfigureFlow } from '@/components/configure/ConfigureFlow';
 import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
-import type { PathwayVerifyResult, TokenInfo, TxState, PeerEntry } from '@/types';
-import { decodeContractError } from '@/utils/decodeError';
+import type { PathwayVerifyResult, TokenInfo, PeerEntry } from '@/types';
 
-type Tab = 'verify' | 'configure' | 'send';
+type Tab = 'verify' | 'configure';
 type WiringMode = 'bridge-oft' | 'oft-oft';
 
 /** Returns false for '', '0x', or any string that would throw BigInt(). */
@@ -379,7 +374,7 @@ export function OFTWiring(): JSX.Element {
                 onClick={handleFetch}
                 disabled={fetching || !homeAddr || !remoteAddr}
               >
-                {fetching ? 'Fetching…' : 'Fetch Token Info'}
+                {fetching ? 'Fetching…' : 'Fetch Info'}
               </button>
             )}
             {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
@@ -390,15 +385,8 @@ export function OFTWiring(): JSX.Element {
                 Switch wallet to {evmHome.name}
               </button>
             )}
-            {evmHome && !evm.isConnected && (
-              <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
-            )}
             {hasStarknet && stark.isConnected && (
               <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Starknet connected</span>
-            )}
-            {hasStarknet && !stark.isConnected && (
-              <button className="btn btn-sm" style={{ borderColor: 'var(--tertiary)', color: 'var(--tertiary)' }}
-                onClick={() => stark.connect().catch(() => {})}>Connect Starknet Wallet</button>
             )}
           </div>
 
@@ -423,8 +411,6 @@ export function OFTWiring(): JSX.Element {
                 onClick={() => setTab('verify')}>Verify</button>
               <button className={`tab-btn ${tab === 'configure' ? 'tab-btn-active' : ''}`}
                 onClick={() => setTab('configure')}>Configure</button>
-              <button className={`tab-btn ${tab === 'send' ? 'tab-btn-active' : ''}`}
-                onClick={() => setTab('send')}>Send</button>
             </div>
             {tab === 'verify' && bothEvm && evmHome && evmRemote && (
               <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
@@ -447,16 +433,6 @@ export function OFTWiring(): JSX.Element {
                 wiring={wiring} cairoEndpoint={cairoEndpoint} cairo={cairo}
                 verifyResult={verifyResult}
                 onRefreshVerify={handleVerify}
-              />
-            )}
-            {tab === 'send' && (
-              <SendPanel
-                home={home} remote={remote}
-                homeAddr={homeAddr} remoteAddr={remoteAddr}
-                mode={mode} evm={evm} stark={stark}
-                wiring={wiring} cairo={cairo}
-                isTestnet={isTestnet}
-                evmUnderlyingToken={evmUnderlyingToken}
               />
             )}
           </>
@@ -872,243 +848,6 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
         </>
       )}
     </section>
-  );
-}
-
-
-// ── Send Panel ───────────────────────────────────────────────────────────────
-
-function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet, evmUnderlyingToken }: {
-  home: AnyChain; remote: AnyChain;
-  homeAddr: string; remoteAddr: string;
-  mode: WiringMode;
-  evm: ReturnType<typeof useEvmWallet>;
-  stark: ReturnType<typeof useStarknetWallet>;
-  wiring: ReturnType<typeof useOFTWiring>;
-  cairo: ReturnType<typeof useCairoOFT>;
-  isTestnet: boolean;
-  evmUnderlyingToken?: string | null;
-}): JSX.Element {
-  const isAdapter = mode === 'bridge-oft';
-  const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
-  const [amount, setAmount] = useState('');
-  const [recipient, setRecipient] = useState('');
-  const [slippage, setSlippage] = useState('5');
-  /** For Starknet adapters: underlying ERC20 token address (needed for approval). Auto-populated from EVM adapter token(). */
-  const [starkTokenAddr, setStarkTokenAddr] = useState(evmUnderlyingToken ?? '');
-  /** Starknet fee token (ETH by default on Sepolia/Mainnet) */
-  const [starkFeeToken, setStarkFeeToken] = useState('0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d'); // STRK on Starknet
-
-  // Auto-populate underlying token from EVM adapter when available
-  useEffect(() => {
-    if (evmUnderlyingToken && !starkTokenAddr) setStarkTokenAddr(evmUnderlyingToken);
-  }, [evmUnderlyingToken]); // eslint-disable-line
-
-  // Send state
-  const [quoting, setQuoting] = useState(false);
-  const [quotedFee, setQuotedFee] = useState<{ nativeFee: bigint; lzTokenFee: bigint } | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [approveTx, setApproveTx] = useState<TxState>({ status: 'idle' });
-  const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
-
-  const srcChain = direction === 'AtoB' ? home : remote;
-  const dstChain = direction === 'AtoB' ? remote : home;
-  const srcAddr = direction === 'AtoB' ? homeAddr : remoteAddr;
-  const dstAddr = direction === 'AtoB' ? remoteAddr : homeAddr;
-  const srcIsStark = isStarknet(srcChain);
-  const dstIsStark = isStarknet(dstChain);
-
-  // Use adapter for A→B when mode is bridge-oft, otherwise OFT address
-  const needsApproval = isAdapter && direction === 'AtoB' && !srcIsStark;
-
-  function parseAmount(decimals: number): bigint {
-    try {
-      const parts = amount.split('.');
-      const whole = parts[0] || '0';
-      const frac = (parts[1] || '').padEnd(decimals, '0').slice(0, decimals);
-      return BigInt(whole) * BigInt(10 ** decimals) + BigInt(frac);
-    } catch {
-      return 0n;
-    }
-  }
-
-  function toBytes32(addr: string): string {
-    try {
-      return '0x' + BigInt(addr).toString(16).padStart(64, '0');
-    } catch {
-      return '0x' + '0'.repeat(64);
-    }
-  }
-
-  async function handleQuote(): Promise<void> {
-    setQuoteError(null);
-    setQuotedFee(null);
-    setQuoting(true);
-    try {
-      const amountLD = parseAmount(18); // assume 18 decimals, could be improved
-      const slip = Number(slippage) || 5;
-      const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
-      const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
-
-      if (srcIsStark) {
-        // Cairo → EVM
-        const starkData = starkChain(isTestnet);
-        const fee = await cairo.cairoQuoteSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, starkData.rpc);
-        setQuotedFee(fee);
-      } else {
-        // EVM → anywhere
-        const fee = await wiring.quoteSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD);
-        setQuotedFee(fee);
-      }
-    } catch (e) {
-      setQuoteError(decodeContractError(e));
-    } finally {
-      setQuoting(false);
-    }
-  }
-
-  async function handleApprove(): Promise<void> {
-    if (!srcIsStark && isAdapter && direction === 'AtoB') {
-      setApproveTx({ status: 'pending' });
-      try {
-        // Get underlying token address
-        const provider = evm.signer!;
-        const c = new (await import('ethers')).Contract(srcAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
-        const tokenAddr = await c.token() as string;
-        const amountLD = parseAmount(18);
-        setApproveTx(await wiring.approveToken(tokenAddr, srcAddr, amountLD));
-      } catch (e) {
-        setApproveTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
-      }
-    }
-  }
-
-  async function handleSend(): Promise<void> {
-    if (!quotedFee) return;
-    const amountLD = parseAmount(18);
-    const slip = Number(slippage) || 5;
-    const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
-    const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
-
-    setSendTx({ status: 'pending' });
-    try {
-      if (srcIsStark) {
-        const tokenAddr = isAdapter && starkTokenAddr ? starkTokenAddr : undefined;
-        const feeToken = starkFeeToken || undefined;
-        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee, tokenAddr, feeToken));
-      } else {
-        setSendTx(await wiring.evmSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD, quotedFee));
-      }
-    } catch (e) {
-      setSendTx({ status: 'error', message: decodeContractError(e) });
-    }
-  }
-
-  const srcConnected = srcIsStark ? stark.address !== null : (evm.isConnected && evm.chainId === (srcChain as LZChain).chainId);
-  return (
-    <Section icon="send" title="Send Tokens" subtitle="Cross-chain OFT transfer — test the wired pathway">
-
-      {/* Direction toggle */}
-      <div className="flex gap-2 mb-4">
-        <button className={`tab-btn ${direction === 'AtoB' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('AtoB'); setQuotedFee(null); }}>
-          {home.name} → {remote.name}
-        </button>
-        <button className={`tab-btn ${direction === 'BtoA' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('BtoA'); setQuotedFee(null); }}>
-          {remote.name} → {home.name}
-        </button>
-      </div>
-
-      <div className="text-xs text-on-surface-variant mb-3">
-        Source: <span className="text-on-surface font-mono">{srcAddr.slice(0, 10)}…</span> on {srcChain.name}
-        {' → '}Destination: <span className="text-on-surface font-mono">{dstAddr.slice(0, 10)}…</span> on {dstChain.name}
-      </div>
-
-      {/* Amount + recipient */}
-      <div className="form-grid mb-3">
-        <div>
-          <div className="label">Amount</div>
-          <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" />
-        </div>
-        <div>
-          <div className="label">Recipient (leave empty = self)</div>
-          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={evm.address ?? stark.address ?? '0x…'} spellCheck={false} />
-        </div>
-      </div>
-
-      <div className="form-grid mb-3">
-        <div>
-          <div className="label">Slippage tolerance (%)</div>
-          <input className="input w-[80px]" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
-        </div>
-        {srcIsStark && (
-          <div>
-            <div className="label">Fee token address (STRK default)</div>
-            <input className="input" value={starkFeeToken} onChange={(e) => setStarkFeeToken(e.target.value)}
-              placeholder="0x… STRK on Starknet" spellCheck={false} />
-            <div className="text-[11px] text-[var(--text-muted)] mt-1">
-              Fee approval is bundled with the send tx.
-            </div>
-          </div>
-        )}
-        {srcIsStark && isAdapter && (
-          <div>
-            <div className="label">Underlying token address (adapter lockbox)</div>
-            <input className="input" value={starkTokenAddr} onChange={(e) => setStarkTokenAddr(e.target.value)}
-              placeholder="0x… (required for adapter approval)" spellCheck={false} />
-          </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-2 items-center flex-wrap">
-        <button className="btn" onClick={handleQuote} disabled={quoting || !amount || !srcAddr}>
-          {quoting ? 'Quoting…' : 'Quote Fee'}
-        </button>
-
-        {needsApproval && (
-          <button className="btn" onClick={handleApprove} disabled={approveTx.status === 'pending' || !amount}>
-            {approveTx.status === 'pending' ? 'Approving…' : 'Approve'}
-          </button>
-        )}
-
-        <button className="btn btn-primary" onClick={handleSend}
-          disabled={!quotedFee || sendTx.status === 'pending' || !srcConnected}>
-          {sendTx.status === 'pending' ? 'Sending…' : 'Send'}
-        </button>
-
-        {!srcConnected && !srcIsStark && evm.isConnected && (
-          <button className="btn btn-sm" onClick={() => evm.switchNetwork((srcChain as LZChain).chainId)}>
-            Switch to {srcChain.name}
-          </button>
-        )}
-        {!srcConnected && !srcIsStark && !evm.isConnected && (
-          <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
-        )}
-        {!srcConnected && srcIsStark && !stark.address && (
-          <button className="btn btn-sm" style={{ borderColor: 'var(--tertiary)', color: 'var(--tertiary)' }}
-            onClick={() => stark.connect().catch(() => {})}>Connect Starknet Wallet</button>
-        )}
-      </div>
-
-      {/* Status */}
-      {quoteError && <div className="text-xs text-error mt-2">{quoteError}</div>}
-      {quotedFee && (
-        <div className="bg-surface-container rounded-lg p-3 mt-3 border border-outline-variant/10">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Quoted fee</div>
-          <div className="text-sm text-on-surface font-mono">
-            {(Number(quotedFee.nativeFee) / 1e18).toFixed(6)} native
-            {quotedFee.lzTokenFee > 0n && ` + ${(Number(quotedFee.lzTokenFee) / 1e18).toFixed(6)} LZ token`}
-          </div>
-        </div>
-      )}
-
-      <div className="mt-3">
-        {approveTx.status !== 'idle' && <TxStatus state={approveTx} />}
-        <TxStatus state={sendTx} showLzScan />
-      </div>
-    </Section>
   );
 }
 

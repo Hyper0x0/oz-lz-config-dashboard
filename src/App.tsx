@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import packageJson from '../package.json';
 import { OFTWiring } from '@/pages/OFTWiring';
+import { OFTs } from '@/pages/OFTs';
 import { Timelock } from '@/pages/Timelock';
 import { Roles } from '@/pages/Roles';
 import { Settings } from '@/pages/Settings';
@@ -37,7 +38,13 @@ function Sidebar(): JSX.Element {
             ? 'flex items-center gap-3 px-4 py-2 rounded bg-surface-container-highest text-primary font-bold border-r-2 border-primary'
             : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
             <span className="material-symbols-outlined text-lg">layers</span>
-            OFT Config
+            OApp Wiring
+          </NavLink>
+          <NavLink to="/ofts" className={({ isActive }) => isActive
+            ? 'flex items-center gap-3 px-4 py-2 rounded bg-surface-container-highest text-primary font-bold border-r-2 border-primary'
+            : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
+            <span className="material-symbols-outlined text-lg">send</span>
+            OFTs
           </NavLink>
           <div className="mt-8 border-t border-outline-variant/10 pt-4">
             <NavLink to="/settings" className={({ isActive }) => isActive
@@ -56,7 +63,7 @@ function Sidebar(): JSX.Element {
 function HeaderWallets(): JSX.Element {
   const { evm, stark } = useWallet();
   const loc = useLocation();
-  const showStarknet = ['/wiring', '/roles', '/timelock'].includes(loc.pathname);
+  const showStarknet = ['/wiring', '/ofts', '/roles', '/timelock'].includes(loc.pathname);
   return (
     <div className="flex items-center gap-2">
       {/* EVM wallet */}
@@ -91,7 +98,8 @@ function HeaderWallets(): JSX.Element {
 function PageTitle(): JSX.Element {
   const loc = useLocation();
   if (loc.pathname === '/roles') return <><span className="text-on-surface-variant font-normal">OpenZeppelin /</span> <span className="text-primary">Roles</span></>;
-  if (loc.pathname === '/wiring') return <><span className="text-on-surface-variant font-normal">LayerZero /</span> <span className="text-primary">OFT Config</span></>;
+  if (loc.pathname === '/wiring') return <><span className="text-on-surface-variant font-normal">LayerZero /</span> <span className="text-primary">OApp Wiring</span></>;
+  if (loc.pathname === '/ofts') return <><span className="text-on-surface-variant font-normal">LayerZero /</span> <span className="text-primary">OFTs</span></>;
   if (loc.pathname === '/settings') return <><span className="text-on-surface-variant font-normal">System /</span> <span className="text-primary">Settings</span></>;
   return <><span className="text-on-surface-variant font-normal">OpenZeppelin /</span> <span className="text-primary">TimeLock</span></>;
 }
@@ -126,6 +134,7 @@ function AppShell(): JSX.Element {
             <Route path="/"         element={<Timelock />} />
             <Route path="/roles"    element={<Roles />} />
             <Route path="/wiring"   element={<OFTWiring />} />
+            <Route path="/ofts"     element={<OFTs />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </div>

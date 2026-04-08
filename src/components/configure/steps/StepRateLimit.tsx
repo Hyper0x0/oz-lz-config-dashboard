@@ -6,8 +6,10 @@ import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
+  const homeDefaults = home.evmChain?.defaults ?? home.starkChain?.defaults;
+  const defaultWindow = String(homeDefaults?.rateLimitWindow ?? 3600);
   const [limit, setLimit] = useState('1000000000000000000000000');
-  const [window_, setWindow] = useState('3600');
+  const [window_, setWindow] = useState(defaultWindow);
   const [tx, setTx] = useState<TxState>({ status: 'idle' });
 
   const rl = verifyResult?.homeRateLimit;
@@ -36,10 +38,14 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
         <div>
           <div className="label">Limit (raw token units)</div>
           <input className="input" value={limit} onChange={(e) => setLimit(e.target.value)} />
+          <div className="text-[11px] text-[var(--text-muted)] mt-1">Depends on token supply & decimals</div>
         </div>
         <div>
           <div className="label">Window (seconds)</div>
-          <input className="input" value={window_} onChange={(e) => setWindow(e.target.value)} placeholder="3600" />
+          <input className="input" value={window_} onChange={(e) => setWindow(e.target.value)} placeholder={defaultWindow} />
+          <div className="text-[11px] text-[var(--text-muted)] mt-1">
+            Recommended: {homeDefaults?.rateLimitWindow ?? 3600}s ({(homeDefaults?.rateLimitWindow ?? 3600) <= 60 ? '1 min' : '1 hour'})
+          </div>
         </div>
       </div>
 

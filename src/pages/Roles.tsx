@@ -532,13 +532,6 @@ export function Roles(): JSX.Element {
           {chainType === 'starknet' && stark.address && (
             <span className="text-xs text-secondary">✓ Starknet connected: {stark.address.slice(0, 8)}…{stark.address.slice(-4)}</span>
           )}
-          {chainType === 'evm' && !evm.isConnected && (
-            <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
-          )}
-          {chainType === 'starknet' && !stark.address && (
-            <button className="btn btn-sm" style={{ borderColor: 'var(--tertiary)', color: 'var(--tertiary)' }}
-              onClick={() => stark.connect().catch(() => {})}>Connect Starknet Wallet</button>
-          )}
           <div className="ml-auto flex items-center gap-2">
             {chainType === 'evm' ? (
               <>

@@ -30,8 +30,9 @@ export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: Step
   const [baSendTx, setBaSendTx] = useState<TxState>({ status: 'idle' });
   const [baRecvTx, setBaRecvTx] = useState<TxState>({ status: 'idle' });
 
-  // Shared config
-  const [confirmations, setConfirmations] = useState(home.evmChain?.isTestnet ? '1' : '15');
+  // Shared config — use chain defaults
+  const homeDefaults = home.evmChain?.defaults ?? home.starkChain?.defaults;
+  const [confirmations, setConfirmations] = useState(String(homeDefaults?.confirmations ?? 15));
   const [maxMsgSize, setMaxMsgSize] = useState('10000');
 
   // Executors per chain
@@ -148,7 +149,12 @@ export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: Step
         <div className="form-grid mb-3">
           <div>
             <div className="label">Block confirmations</div>
-            <input className="input" value={confirmations} onChange={(e) => setConfirmations(e.target.value)} placeholder="15" />
+            <input className="input" value={confirmations} onChange={(e) => setConfirmations(e.target.value)} placeholder={String(homeDefaults?.confirmations ?? 15)} />
+            {homeDefaults && (
+              <div className="text-[11px] text-[var(--text-muted)] mt-1">
+                Recommended: {homeDefaults.confirmations} · {homeDefaults.requiredDVNs}+ required DVNs
+              </div>
+            )}
           </div>
           <div>
             <div className="label">Executor ({srcSide.chainLabel})</div>

@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react';
 import { LZ_CHAINS, filteredChains } from '@/config/lzCatalog';
-import type { LZChain } from '@/config/lzCatalog';
+import type { LZChain, ChainDefaults } from '@/config/lzCatalog';
 
 const METADATA_URL = 'https://metadata.layerzero-api.com/v1/metadata';
 
 // V2 EIDs: mainnet 30xxx, testnet 40xxx
 const V2_EID_THRESHOLD = 30000;
+
+// Ethereum mainnet EID
+const ETH_EID = 30101;
+
+const ETH_DEFAULTS: ChainDefaults  = { confirmations: 15, requiredDVNs: 2, gasLimit: 65000,  rateLimitValue: '0', rateLimitWindow: 3600 };
+const L2_DEFAULTS: ChainDefaults   = { confirmations: 20, requiredDVNs: 2, gasLimit: 80000,  rateLimitValue: '0', rateLimitWindow: 3600 };
+const TEST_DEFAULTS: ChainDefaults = { confirmations: 1,  requiredDVNs: 1, gasLimit: 80000,  rateLimitValue: '0', rateLimitWindow: 60 };
 
 interface RawDeployment {
   eid?: string | number;
@@ -76,6 +83,7 @@ async function fetchChains(): Promise<LZChain[]> {
           .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
           .join(' ');
 
+        const isTest = env === 'testnet';
         chains.push({
           eid,
           chainId,
@@ -85,10 +93,11 @@ async function fetchChains(): Promise<LZChain[]> {
           rpc,
           // Inherit fallback RPC from static catalog for known chains
           rpcFallback: staticEntry?.rpcFallback,
-          isTestnet: env === 'testnet',
+          isTestnet: isTest,
           executor: v2.executor?.address,
           sendLib: v2.sendUln302?.address,
           receiveLib: v2.receiveUln302?.address,
+          defaults: staticEntry?.defaults ?? (isTest ? TEST_DEFAULTS : eid === ETH_EID ? ETH_DEFAULTS : L2_DEFAULTS),
         });
       }
 

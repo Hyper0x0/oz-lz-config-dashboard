@@ -6,7 +6,10 @@ import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
-  const [gas, setGas] = useState('80000');
+  const homeDefaults = home.evmChain?.defaults ?? home.starkChain?.defaults;
+  const remoteDefaults = remote.evmChain?.defaults ?? remote.starkChain?.defaults;
+  const defaultGas = String(Math.max(homeDefaults?.gasLimit ?? 80000, remoteDefaults?.gasLimit ?? 80000));
+  const [gas, setGas] = useState(defaultGas);
   const [homeTx, setHomeTx] = useState<TxState>({ status: 'idle' });
   const [remoteTx, setRemoteTx] = useState<TxState>({ status: 'idle' });
 
@@ -42,7 +45,10 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
 
       <div className="mb-3">
         <div className="label">Gas limit for lzReceive</div>
-        <input className="input" style={{ maxWidth: 200 }} value={gas} onChange={(e) => setGas(e.target.value)} placeholder="80000" />
+        <input className="input" style={{ maxWidth: 200 }} value={gas} onChange={(e) => setGas(e.target.value)} placeholder={defaultGas} />
+        <div className="text-[11px] text-[var(--text-muted)] mt-1">
+          Recommended: {homeDefaults?.gasLimit ?? '—'} ({home.chainLabel}) / {remoteDefaults?.gasLimit ?? '—'} ({remote.chainLabel})
+        </div>
       </div>
 
       <div className="step-actions">
