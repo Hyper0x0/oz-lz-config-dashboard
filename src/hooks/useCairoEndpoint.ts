@@ -2,8 +2,15 @@ import { useCallback } from 'react';
 import { Contract, RpcProvider, CallData } from 'starknet';
 import type { WalletAccount } from 'starknet';
 import type { TxState } from '@/types';
+import { decodeContractError } from '@/utils/decodeError';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
-import { CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN, type UlnConfigParams, type ExecutorConfigParams, encodeUlnConfig, encodeExecutorConfig } from '@/utils/cairoLzConfig';
+import {
+  CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN,
+  type UlnConfigParams, type ExecutorConfigParams,
+  encodeUlnConfig, encodeExecutorConfig,
+  decodeStarknetUln, decodeStarknetExecutor,
+  type DecodedStarknetUln, type DecodedStarknetExecutor,
+} from '@/utils/cairoLzConfig';
 import StarknetOFTABI from '@/abis/svm/OFT.json';
 import StarknetEndpointABI from '@/abis/svm/EndpointV2.json';
 
@@ -58,6 +65,12 @@ export interface CairoEndpointOps {
   readSendLibrary: (endpointAddr: string, oappAddr: string, eid: number, rpc: string) => Promise<string | null>;
   readReceiveLibrary: (endpointAddr: string, oappAddr: string, eid: number, rpc: string) => Promise<{ lib: string | null; isDefault: boolean }>;
   readDelegate: (endpointAddr: string, oappAddr: string, rpc: string) => Promise<string | null>;
+  /** Read ULN config (DVNs + confirmations) from the send library for a given remote EID. */
+  readSendUlnConfig: (endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string) => Promise<DecodedStarknetUln | null>;
+  /** Read executor config from the send library for a given remote EID. */
+  readSendExecutorConfig: (endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string) => Promise<DecodedStarknetExecutor | null>;
+  /** Read ULN config (DVNs + confirmations) from the receive library for a given remote EID. */
+  readReceiveUlnConfig: (endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string) => Promise<DecodedStarknetUln | null>;
 }
 
 export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOps {
@@ -88,7 +101,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -106,7 +119,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -127,7 +140,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -143,7 +156,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -159,7 +172,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -178,7 +191,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -197,7 +210,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -216,7 +229,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -232,7 +245,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -293,9 +306,58 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
     }
   }, []);
 
+  const readSendUlnConfig = useCallback(async (
+    endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
+  ): Promise<DecodedStarknetUln | null> => {
+    try {
+      const provider = new RpcProvider({ nodeUrl: rpc });
+      const result = await provider.callContract({
+        contractAddress: endpointAddr,
+        entrypoint: 'get_send_config',
+        calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
+      });
+      return decodeStarknetUln(result);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const readSendExecutorConfig = useCallback(async (
+    endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
+  ): Promise<DecodedStarknetExecutor | null> => {
+    try {
+      const provider = new RpcProvider({ nodeUrl: rpc });
+      const result = await provider.callContract({
+        contractAddress: endpointAddr,
+        entrypoint: 'get_send_config',
+        calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_EXECUTOR]),
+      });
+      return decodeStarknetExecutor(result);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const readReceiveUlnConfig = useCallback(async (
+    endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
+  ): Promise<DecodedStarknetUln | null> => {
+    try {
+      const provider = new RpcProvider({ nodeUrl: rpc });
+      const result = await provider.callContract({
+        contractAddress: endpointAddr,
+        entrypoint: 'get_receive_config',
+        calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
+      });
+      return decodeStarknetUln(result);
+    } catch {
+      return null;
+    }
+  }, []);
+
   return {
     setEnforcedOptions, setLibraries, setSendLibrary, setReceiveLibrary,
     setSendConfigsAtomic, setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
     setDelegate, readSendLibrary, readReceiveLibrary, readDelegate,
+    readSendUlnConfig, readSendExecutorConfig, readReceiveUlnConfig,
   };
 }

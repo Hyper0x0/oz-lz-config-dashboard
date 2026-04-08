@@ -56,7 +56,7 @@ function Sidebar(): JSX.Element {
 function HeaderWallets(): JSX.Element {
   const { evm, stark } = useWallet();
   const loc = useLocation();
-  const isWiring = loc.pathname === '/wiring';
+  const showStarknet = ['/wiring', '/roles', '/timelock'].includes(loc.pathname);
   return (
     <div className="flex items-center gap-2">
       {/* EVM wallet */}
@@ -71,7 +71,7 @@ function HeaderWallets(): JSX.Element {
         </button>
       )}
       {/* Starknet wallet — only on wiring page */}
-      {isWiring && (
+      {showStarknet && (
         stark.address ? (
           <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-container rounded border border-tertiary/20">
             <span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>

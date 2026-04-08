@@ -127,7 +127,7 @@ export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: Step
       );
     }
     txSetter(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess(side === home ? 'home' : 'remote');
   }
 
   // ── Render direction ──────────────────────────────────────────────────────

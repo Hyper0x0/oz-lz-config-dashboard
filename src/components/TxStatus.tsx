@@ -4,9 +4,11 @@ interface Props {
   state: TxState;
   /** Base URL for block explorer (e.g. "https://sepolia.arbiscan.io/tx/"). Hash is appended. */
   explorerUrl?: string;
+  /** Show LayerZero Scan link (only for cross-chain send transactions). */
+  showLzScan?: boolean;
 }
 
-export function TxStatus({ state, explorerUrl }: Props): JSX.Element | null {
+export function TxStatus({ state, explorerUrl, showLzScan }: Props): JSX.Element | null {
   if (state.status === 'idle') return null;
 
   if (state.status === 'pending') {
@@ -29,10 +31,12 @@ export function TxStatus({ state, explorerUrl }: Props): JSX.Element | null {
             View on Explorer ↗
           </a>
         )}
-        <a href={lzScanUrl} target="_blank" rel="noreferrer"
-          style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-          LayerZero Scan ↗
-        </a>
+        {showLzScan && (
+          <a href={lzScanUrl} target="_blank" rel="noreferrer"
+            style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+            LayerZero Scan ↗
+          </a>
+        )}
       </div>
     );
   }

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { RpcProvider, CallData, Contract } from 'starknet';
 import type { WalletAccount } from 'starknet';
 import type { TxState, PeerEntry } from '@/types';
+import { decodeContractError } from '@/utils/decodeError';
 import StarknetOFTABI from '@/abis/svm/OFT.json';
 import StarknetOFTAdapterABI from '@/abis/svm/OFTAdapter.json';
 
@@ -114,7 +115,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 
@@ -226,7 +227,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+      return { status: 'error', message: decodeContractError(e) };
     }
   }, [account]);
 

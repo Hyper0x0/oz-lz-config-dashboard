@@ -1,37 +1,57 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Contract, JsonRpcProvider, Interface, keccak256, toUtf8Bytes } from 'ethers';
+import { RpcProvider, Contract as StarkContract } from 'starknet';
 import { useWallet } from '@/context/WalletContext';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
 import { ChainBadge } from '@/components/ChainBadge';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
-import { ARBISCAN_API_KEY } from '@/config/chains';
+import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
+import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
+import { decodeContractError } from '@/utils/decodeError';
 import type { TxState } from '@/types';
 
 // ── Known role presets ──────────────────────────────────────────────────────
 
-interface RolePreset { label: string; hash: string }
+type ChainType = 'evm' | 'starknet';
+
+interface RolePreset { label: string; hash: string; cairoHash?: string }
+
+/** Starknet sn_keccak: keccak256 masked to 250 bits, as hex felt. */
+function snKeccak(name: string): string {
+  const full = keccak256(toUtf8Bytes(name));
+  const masked = BigInt(full) & ((1n << 250n) - 1n);
+  return '0x' + masked.toString(16);
+}
+
+function makePreset(label: string, evmHash?: string): RolePreset {
+  const hash = evmHash ?? keccak256(toUtf8Bytes(label));
+  const cairoHash = label === 'DEFAULT_ADMIN_ROLE' ? '0x0' : snKeccak(label);
+  return { label, hash, cairoHash };
+}
+
+const ZERO_HASH = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 const BUILTIN_PRESETS: Record<string, RolePreset[]> = {
   'TimelockController': [
-    { label: 'DEFAULT_ADMIN_ROLE',  hash: '0x0000000000000000000000000000000000000000000000000000000000000000' },
-    { label: 'PROPOSER_ROLE',       hash: keccak256(toUtf8Bytes('PROPOSER_ROLE')) },
-    { label: 'EXECUTOR_ROLE',       hash: keccak256(toUtf8Bytes('EXECUTOR_ROLE')) },
-    { label: 'CANCELLER_ROLE',      hash: keccak256(toUtf8Bytes('CANCELLER_ROLE')) },
+    makePreset('DEFAULT_ADMIN_ROLE', ZERO_HASH),
+    makePreset('PROPOSER_ROLE'),
+    makePreset('EXECUTOR_ROLE'),
+    makePreset('CANCELLER_ROLE'),
   ],
   'OFT / OApp': [
-    { label: 'DEFAULT_ADMIN_ROLE',  hash: '0x0000000000000000000000000000000000000000000000000000000000000000' },
-    { label: 'MINTER_ROLE',         hash: keccak256(toUtf8Bytes('MINTER_ROLE')) },
-    { label: 'PAUSER_ROLE',         hash: keccak256(toUtf8Bytes('PAUSER_ROLE')) },
-    { label: 'UPGRADER_ROLE',       hash: keccak256(toUtf8Bytes('UPGRADER_ROLE')) },
+    makePreset('DEFAULT_ADMIN_ROLE', ZERO_HASH),
+    makePreset('MINTER_ROLE'),
+    makePreset('PAUSER_ROLE'),
+    makePreset('UPGRADER_ROLE'),
   ],
   'Common': [
-    { label: 'DEFAULT_ADMIN_ROLE',  hash: '0x0000000000000000000000000000000000000000000000000000000000000000' },
-    { label: 'MINTER_ROLE',         hash: keccak256(toUtf8Bytes('MINTER_ROLE')) },
-    { label: 'BURNER_ROLE',         hash: keccak256(toUtf8Bytes('BURNER_ROLE')) },
-    { label: 'PAUSER_ROLE',         hash: keccak256(toUtf8Bytes('PAUSER_ROLE')) },
-    { label: 'UPGRADER_ROLE',       hash: keccak256(toUtf8Bytes('UPGRADER_ROLE')) },
+    makePreset('DEFAULT_ADMIN_ROLE', ZERO_HASH),
+    makePreset('MINTER_ROLE'),
+    makePreset('BURNER_ROLE'),
+    makePreset('PAUSER_ROLE'),
+    makePreset('UPGRADER_ROLE'),
   ],
 };
 
@@ -56,9 +76,9 @@ function computeHash(name: string): string {
   return keccak256(toUtf8Bytes(name));
 }
 
-// ── Chain list (for explorer links + fallback RPC) ──────────────────────────
+// ── Chain lists ─────────────────────────────────────────────────────────────
 
-const CHAINS = [
+const EVM_CHAINS = [
   { id: 1,        name: 'Ethereum',        rpc: 'https://eth.llamarpc.com',                    explorer: 'etherscan.io' },
   { id: 42161,    name: 'Arbitrum',         rpc: 'https://arb1.arbitrum.io/rpc',                explorer: 'arbiscan.io' },
   { id: 421614,   name: 'Arbitrum Sepolia', rpc: 'https://sepolia-rollup.arbitrum.io/rpc',      explorer: 'sepolia.arbiscan.io' },
@@ -71,6 +91,11 @@ const CHAINS = [
   { id: 11155111, name: 'Sepolia',          rpc: 'https://rpc.sepolia.org',                     explorer: 'sepolia.etherscan.io' },
 ];
 
+const STARK_CHAINS = [
+  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'starkscan.co' },
+  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.starkscan.co' },
+];
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 interface RoleHolder { role: string; roleLabel: string; account: string }
@@ -78,13 +103,20 @@ interface RoleHolder { role: string; roleLabel: string; account: string }
 // ── Component ───────────────────────────────────────────────────────────────
 
 export function Roles(): JSX.Element {
-  const { evm } = useWallet();
+  const { evm, stark } = useWallet();
 
-  // Chain: auto-detect from wallet, with manual override
-  const walletChain = CHAINS.find((c) => c.id === evm.chainId);
+  // Chain type toggle
+  const [chainType, setChainType] = useState<ChainType>('evm');
+
+  // EVM chain: auto-detect from wallet, with manual override
+  const walletChain = EVM_CHAINS.find((c) => c.id === evm.chainId);
   const [manualChainId, setManualChainId] = useState<number | null>(null);
   const activeChainId = manualChainId ?? evm.chainId ?? 421614;
-  const chain = CHAINS.find((c) => c.id === activeChainId) ?? CHAINS[2];
+  const evmChain = EVM_CHAINS.find((c) => c.id === activeChainId) ?? EVM_CHAINS[2];
+
+  // Starknet chain
+  const [starkChainId, setStarkChainId] = useState<string>('SN_SEPOLIA');
+  const starkChain = STARK_CHAINS.find((c) => c.id === starkChainId) ?? STARK_CHAINS[1];
 
   // Sync manual override when wallet changes
   useEffect(() => {
@@ -121,11 +153,17 @@ export function Roles(): JSX.Element {
   const builtinRoles = BUILTIN_PRESETS[presetKey] ?? [];
   const presetRoles = [...builtinRoles, ...customRoles];
 
+  /** Get the role hash appropriate for the current chain type. */
+  function roleHash(role: RolePreset): string {
+    return chainType === 'starknet' ? (role.cairoHash ?? snKeccak(role.label)) : role.hash;
+  }
+
   function addCustomRole(): void {
     if (!newRoleName.trim()) return;
     const hash = computeHash(newRoleName.trim());
     if (customRoles.some((r) => r.hash === hash)) return; // duplicate
-    const updated = [...customRoles, { label: newRoleName.trim(), hash }];
+    const cairoHash = newRoleName.startsWith('0x') ? newRoleName : snKeccak(newRoleName.trim());
+    const updated = [...customRoles, { label: newRoleName.trim(), hash, cairoHash }];
     setCustomRoles(updated);
     saveCustomRoles(updated);
     setNewRoleName('');
@@ -137,14 +175,24 @@ export function Roles(): JSX.Element {
     saveCustomRoles(updated);
   }
 
-  const getProvider = useCallback(() => {
-    // Use wallet provider if on the same chain, else public RPC
-    if (evm.provider && evm.chainId === activeChainId) return evm.provider;
-    return new JsonRpcProvider(chain.rpc);
-  }, [evm.provider, evm.chainId, activeChainId, chain.rpc]);
+  // Reset state when chain type changes
+  useEffect(() => {
+    setChecked(false);
+    setError(null);
+    setAcSupport('unknown');
+    setHolders([]);
+    setMyRoles(new Map());
+    setGrantTx({ status: 'idle' });
+    setRenounceTx({ status: 'idle' });
+  }, [chainType]);
 
-  // ── Check contract + wallet roles ─────────────────────────────────────
-  async function handleCheck(): Promise<void> {
+  const getEvmProvider = useCallback(() => {
+    if (evm.provider && evm.chainId === activeChainId) return evm.provider;
+    return new JsonRpcProvider(evmChain.rpc);
+  }, [evm.provider, evm.chainId, activeChainId, evmChain.rpc]);
+
+  // ── EVM Check ─────────────────────────────────────────────────────────
+  async function handleEvmCheck(): Promise<void> {
     if (!contractAddr) return;
     setChecking(true);
     setError(null);
@@ -153,26 +201,21 @@ export function Roles(): JSX.Element {
     setHolders([]);
     setMyRoles(new Map());
     try {
-      const provider = getProvider();
+      const provider = getEvmProvider();
       const c = new Contract(contractAddr, AccessControlABI, provider);
-
-      // Soft ERC-165 check — many contracts don't implement it
       let supports: 'yes' | 'no' | 'unknown' = 'unknown';
       try {
         const result = await c.supportsInterface('0x7965db0b');
         supports = result ? 'yes' : 'no';
       } catch {
-        supports = 'unknown'; // ERC-165 not implemented — continue anyway
+        supports = 'unknown';
       }
       setAcSupport(supports);
-
       if (supports === 'no') {
         setError('Contract explicitly returned false for IAccessControl interface');
         setChecking(false);
         return;
       }
-
-      // Try hasRole for each preset — if ANY works, the contract has AccessControl
       if (evm.address) {
         const roleMap = new Map<string, boolean>();
         let anyWorked = false;
@@ -200,16 +243,64 @@ export function Roles(): JSX.Element {
     }
   }
 
-  // ── Scan events ───────────────────────────────────────────────────────
-  async function handleScan(): Promise<void> {
+  // ── Starknet Check ────────────────────────────────────────────────────
+  async function handleStarkCheck(): Promise<void> {
     if (!contractAddr) return;
+    setChecking(true);
+    setError(null);
+    setChecked(false);
+    setAcSupport('unknown');
+    setHolders([]);
+    setMyRoles(new Map());
+    try {
+      const provider = new RpcProvider({ nodeUrl: starkChain.rpc });
+      const c = new StarkContract(StarkAccessControlABI, contractAddr, provider);
+
+      const walletAddr = stark.address;
+      if (walletAddr) {
+        const roleMap = new Map<string, boolean>();
+        let anyWorked = false;
+        for (const role of presetRoles) {
+          const rh = roleHash(role);
+          try {
+            const has = await c.call('has_role', [rh, walletAddr]);
+            roleMap.set(role.hash, Boolean(has));
+            anyWorked = true;
+          } catch {
+            roleMap.set(role.hash, false);
+          }
+        }
+        setMyRoles(roleMap);
+        if (!anyWorked) {
+          setError('Contract does not appear to implement AccessControl — has_role calls failed');
+          setChecking(false);
+          return;
+        }
+      }
+      setAcSupport('yes');
+      setChecked(true);
+    } catch (e) {
+      setError(decodeContractError(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  function handleCheck(): void {
+    if (chainType === 'starknet') void handleStarkCheck();
+    else void handleEvmCheck();
+  }
+
+  // ── EVM Scan events ───────────────────────────────────────────────────
+  async function handleScan(): Promise<void> {
+    if (!contractAddr || chainType === 'starknet') return;
     setScanning(true);
     setScanError(null);
     try {
       const iface = new Interface(AccessControlABI);
       const grantedTopic = iface.getEvent('RoleGranted')!.topicHash;
       const revokedTopic = iface.getEvent('RoleRevoked')!.topicHash;
-      const base = `https://api.etherscan.io/v2/api?chainid=${chain.id}&module=logs&action=getLogs&address=${contractAddr}&fromBlock=0&toBlock=latest&apikey=${ARBISCAN_API_KEY}`;
+      const base = `https://api.etherscan.io/v2/api?chainid=${evmChain.id}&module=logs&action=getLogs&address=${contractAddr}&fromBlock=0&toBlock=latest&apikey=${ARBISCAN_API_KEY}`;
 
       type LogEntry = { topics: string[]; data: string };
       async function fetchLogs(topic0: string): Promise<LogEntry[]> {
@@ -241,11 +332,11 @@ export function Roles(): JSX.Element {
       }
 
       const result: RoleHolder[] = [];
-      for (const [roleHash, accounts] of roleAccounts) {
-        const preset = presetRoles.find((p) => p.hash.toLowerCase() === roleHash.toLowerCase());
-        const label = preset?.label ?? `0x${roleHash.slice(2, 10)}…`;
+      for (const [rh, accounts] of roleAccounts) {
+        const preset = presetRoles.find((p) => p.hash.toLowerCase() === rh.toLowerCase());
+        const label = preset?.label ?? `0x${rh.slice(2, 10)}…`;
         for (const account of accounts) {
-          result.push({ role: roleHash, roleLabel: label, account });
+          result.push({ role: rh, roleLabel: label, account });
         }
       }
       result.sort((a, b) => a.roleLabel.localeCompare(b.roleLabel) || a.account.localeCompare(b.account));
@@ -259,7 +350,32 @@ export function Roles(): JSX.Element {
 
   // ── Grant or Revoke ───────────────────────────────────────────────────
   async function handleGrantRevoke(): Promise<void> {
-    if (!contractAddr || !grantRoleHash || !grantAddr || !evm.signer) return;
+    if (!contractAddr || !grantRoleHash || !grantAddr) return;
+
+    if (chainType === 'starknet') {
+      if (!stark.account) return;
+      setGrantTx({ status: 'pending' });
+      try {
+        // Find the cairo hash for the selected role
+        const preset = presetRoles.find((r) => r.hash === grantRoleHash);
+        const cairoRH = preset?.cairoHash ?? grantRoleHash;
+        const entrypoint = revokeMode ? 'revoke_role' : 'grant_role';
+        const response = await stark.account.execute([{
+          contractAddress: contractAddr,
+          entrypoint,
+          calldata: [cairoRH, grantAddr],
+        }]);
+        await stark.account.waitForTransaction(response.transaction_hash);
+        setGrantTx({ status: 'success', hash: response.transaction_hash });
+        void handleStarkCheck();
+      } catch (e) {
+        setGrantTx({ status: 'error', message: decodeContractError(e) });
+      }
+      return;
+    }
+
+    // EVM
+    if (!evm.signer) return;
     setGrantTx({ status: 'pending' });
     try {
       const c = new Contract(contractAddr, AccessControlABI, evm.signer);
@@ -268,30 +384,55 @@ export function Roles(): JSX.Element {
         : await c.grantRole(grantRoleHash, grantAddr);
       await tx.wait();
       setGrantTx({ status: 'success', hash: tx.hash });
-      void handleCheck();
+      void handleEvmCheck();
       void handleScan();
     } catch (e) {
-      setGrantTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+      setGrantTx({ status: 'error', message: decodeContractError(e) });
     }
   }
 
-  async function handleRenounce(roleHash: string): Promise<void> {
-    if (!contractAddr || !evm.signer || !evm.address) return;
-    if (!confirm(`Are you sure you want to renounce this role? This cannot be undone without an admin granting it back.`)) return;
+  async function handleRenounce(role: RolePreset): Promise<void> {
+    if (!contractAddr) return;
+
+    if (chainType === 'starknet') {
+      if (!stark.account || !stark.address) return;
+      if (!confirm('Are you sure you want to renounce this role? This cannot be undone without an admin granting it back.')) return;
+      setRenounceTx({ status: 'pending' });
+      try {
+        const cairoRH = role.cairoHash ?? snKeccak(role.label);
+        const response = await stark.account.execute([{
+          contractAddress: contractAddr,
+          entrypoint: 'renounce_role',
+          calldata: [cairoRH, stark.address],
+        }]);
+        await stark.account.waitForTransaction(response.transaction_hash);
+        setRenounceTx({ status: 'success', hash: response.transaction_hash });
+        void handleStarkCheck();
+      } catch (e) {
+        setRenounceTx({ status: 'error', message: decodeContractError(e) });
+      }
+      return;
+    }
+
+    // EVM
+    if (!evm.signer || !evm.address) return;
+    if (!confirm('Are you sure you want to renounce this role? This cannot be undone without an admin granting it back.')) return;
     setRenounceTx({ status: 'pending' });
     try {
       const c = new Contract(contractAddr, AccessControlABI, evm.signer);
-      const tx = await c.renounceRole(roleHash, evm.address);
+      const tx = await c.renounceRole(role.hash, evm.address);
       await tx.wait();
       setRenounceTx({ status: 'success', hash: tx.hash });
-      void handleCheck();
+      void handleEvmCheck();
     } catch (e) {
-      setRenounceTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+      setRenounceTx({ status: 'error', message: decodeContractError(e) });
     }
   }
 
-  const isAdmin = myRoles.get('0x0000000000000000000000000000000000000000000000000000000000000000') === true;
-  const wrongChain = evm.isConnected && evm.chainId !== activeChainId;
+  const walletAddr = chainType === 'starknet' ? stark.address : evm.address;
+  const isAdmin = myRoles.get(ZERO_HASH) === true;
+  const wrongChain = chainType === 'evm' && evm.isConnected && evm.chainId !== activeChainId;
+  const explorer = chainType === 'starknet' ? starkChain.explorer : evmChain.explorer;
 
   // Group holders by role
   const holdersByRole = new Map<string, RoleHolder[]>();
@@ -305,15 +446,22 @@ export function Roles(): JSX.Element {
       {/* Role Holders — sidebar */}
       <Section icon="group" title="Role Holders" subtitle="On-chain role assignments"
         actions={
-          <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !contractAddr || !checked}>
-            {scanning ? 'Scanning…' : 'Scan'}
-          </button>
+          chainType === 'evm' ? (
+            <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !contractAddr || !checked}>
+              {scanning ? 'Scanning…' : 'Scan'}
+            </button>
+          ) : null
         }>
         {scanError && <div className="text-xs text-error mb-3">{scanError}</div>}
-        {!checked && (
+        {chainType === 'starknet' && (
+          <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">
+            Event scanning not available for Starknet — use "Check" to verify specific roles
+          </div>
+        )}
+        {chainType === 'evm' && !checked && (
           <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Check a contract first</div>
         )}
-        {checked && holders.length === 0 && !scanning && (
+        {chainType === 'evm' && checked && holders.length === 0 && !scanning && (
           <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Press Scan to find holders</div>
         )}
         {holdersByRole.size > 0 && (
@@ -326,7 +474,7 @@ export function Roles(): JSX.Element {
                     <div key={h.account} className="flex items-center gap-2 bg-surface-container rounded px-3 py-2 border border-outline-variant/10">
                       <span className="text-xs text-secondary font-bold">✓</span>
                       <span className="font-mono text-[10px] text-on-surface break-all flex-1">{h.account}</span>
-                      <a href={`https://${chain.explorer}/address/${h.account}`} target="_blank" rel="noreferrer"
+                      <a href={`https://${explorer}/address/${h.account}`} target="_blank" rel="noreferrer"
                         className="text-[10px] text-primary hover:underline flex-shrink-0">↗</a>
                     </div>
                   ))}
@@ -370,29 +518,51 @@ export function Roles(): JSX.Element {
     <>
       {/* Contract setup */}
       <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract">
+        {/* Chain type toggle */}
+        <div className="flex items-center gap-2 mb-4">
+          <button className={`btn btn-sm ${chainType === 'evm' ? 'btn-primary' : ''}`} onClick={() => setChainType('evm')}>EVM</button>
+          <button className={`btn btn-sm ${chainType === 'starknet' ? 'btn-primary' : ''}`} onClick={() => setChainType('starknet')}>Starknet</button>
+        </div>
+
         {/* Network indicator */}
         <div className="flex items-center gap-3 mb-4">
-          {evm.isConnected && walletChain && !manualChainId && (
+          {chainType === 'evm' && evm.isConnected && walletChain && !manualChainId && (
             <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
           )}
-          {!evm.isConnected && (
-            <span className="text-xs text-on-surface-variant">No wallet — select network</span>
+          {chainType === 'starknet' && stark.address && (
+            <span className="text-xs text-secondary">✓ Starknet connected: {stark.address.slice(0, 8)}…{stark.address.slice(-4)}</span>
+          )}
+          {chainType === 'evm' && !evm.isConnected && (
+            <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
+          )}
+          {chainType === 'starknet' && !stark.address && (
+            <button className="btn btn-sm" style={{ borderColor: 'var(--tertiary)', color: 'var(--tertiary)' }}
+              onClick={() => stark.connect().catch(() => {})}>Connect Starknet Wallet</button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <select className="input text-xs w-44" value={activeChainId}
-              onChange={(e) => setManualChainId(Number(e.target.value))}>
-              {CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            {manualChainId && (
-              <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
+            {chainType === 'evm' ? (
+              <>
+                <select className="input text-xs w-44" value={activeChainId}
+                  onChange={(e) => setManualChainId(Number(e.target.value))}>
+                  {EVM_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {manualChainId && (
+                  <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
+                )}
+              </>
+            ) : (
+              <select className="input text-xs w-44" value={starkChainId}
+                onChange={(e) => setStarkChainId(e.target.value)}>
+                {STARK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
             )}
           </div>
         </div>
 
-        {/* Wrong chain warning */}
+        {/* Wrong chain warning (EVM only) */}
         {wrongChain && (
           <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
-            <span>Wallet is on {CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, but selected network is {chain.name}.</span>
+            <span>Wallet is on {EVM_CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, but selected network is {evmChain.name}.</span>
             <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet</button>
             <button className="btn btn-sm" onClick={() => setManualChainId(evm.chainId ?? null)}>Use wallet chain</button>
           </div>
@@ -416,13 +586,14 @@ export function Roles(): JSX.Element {
         </div>
 
         {error && <div className="text-xs text-error mt-2">{error}</div>}
-        {checked && acSupport === 'yes' && <div className="text-xs text-secondary mt-2">✓ IAccessControl confirmed (ERC-165)</div>}
-        {checked && acSupport === 'unknown' && <div className="text-xs text-on-surface-variant mt-2">ERC-165 not supported — hasRole calls succeeded</div>}
+        {checked && acSupport === 'yes' && chainType === 'evm' && <div className="text-xs text-secondary mt-2">✓ IAccessControl confirmed (ERC-165)</div>}
+        {checked && acSupport === 'unknown' && chainType === 'evm' && <div className="text-xs text-on-surface-variant mt-2">ERC-165 not supported — hasRole calls succeeded</div>}
+        {checked && chainType === 'starknet' && <div className="text-xs text-secondary mt-2">✓ AccessControl confirmed — has_role calls succeeded</div>}
       </Section>
 
       {/* Your Roles */}
-      {checked && evm.address && (
-        <Section icon="badge" title="Your Roles" subtitle={`${evm.address.slice(0, 8)}…${evm.address.slice(-4)}`}>
+      {checked && walletAddr && (
+        <Section icon="badge" title="Your Roles" subtitle={`${walletAddr.slice(0, 8)}…${walletAddr.slice(-4)}`}>
           <div className="grid grid-cols-2 gap-2">
             {presetRoles.map((role) => {
               const has = myRoles.get(role.hash) === true;
@@ -431,7 +602,7 @@ export function Roles(): JSX.Element {
                   <span className="font-bold">{has ? '✓' : '✗'}</span>
                   <span className="font-mono text-[11px] flex-1">{role.label}</span>
                   {has && (
-                    <button className="btn btn-sm btn-danger" onClick={() => handleRenounce(role.hash)}
+                    <button className="btn btn-sm btn-danger" onClick={() => handleRenounce(role)}
                       disabled={renounceTx.status === 'pending'}>Renounce</button>
                   )}
                 </div>

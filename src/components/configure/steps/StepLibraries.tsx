@@ -61,7 +61,7 @@ export function StepLibraries({ home, remote, hooks, verifyResult, onTxSuccess }
       result = await epConfig.setReceiveLib(side.evmChain!.endpoint, side.contractAddr, remoteEid, lib);
     }
     setTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess(side === home ? 'home' : 'remote');
   }
 
   function renderSide(

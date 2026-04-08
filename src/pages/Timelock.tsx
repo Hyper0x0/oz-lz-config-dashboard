@@ -15,6 +15,7 @@ import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
 import ERC20ABI from '@/abis/evm/ERC20.json';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import type { TxState, OperationState } from '@/types';
+import { VaultState } from '@/types';
 
 // ── Parse timelockTarget.json once ───────────────────────────────────────────
 const TARGET_IFACE = new Interface(timelockTarget.abi);
@@ -342,7 +343,7 @@ export function Timelock(): JSX.Element {
               <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
             )}
             {!evm.isConnected && (
-              <span className="text-xs text-on-surface-variant">No wallet — select network</span>
+              <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect EVM Wallet</button>
             )}
             <div className="ml-auto flex items-center gap-2">
               <select className="input text-xs w-44" value={activeChainId}
@@ -405,13 +406,27 @@ export function Timelock(): JSX.Element {
                         {input.name || `arg${i}`}
                         <span className="ml-1.5 normal-case text-primary/60 font-normal">({input.type})</span>
                       </div>
-                      <input
-                        className="input"
-                        value={fnArgs[i] ?? ''}
-                        onChange={(e) => setArg(i, e.target.value)}
-                        spellCheck={false}
-                        placeholder={input.type === 'address' ? '0x…' : input.type.startsWith('uint') ? '0' : ''}
-                      />
+                      {selectedFn === 'setVaultState' && input.name === 'state' ? (
+                        <select
+                          className="input"
+                          value={fnArgs[i] ?? '0'}
+                          onChange={(e) => setArg(i, e.target.value)}
+                        >
+                          {Object.entries(VaultState)
+                            .filter(([, v]) => typeof v === 'number')
+                            .map(([label, val]) => (
+                              <option key={val} value={String(val)}>{label} ({val})</option>
+                            ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="input"
+                          value={fnArgs[i] ?? ''}
+                          onChange={(e) => setArg(i, e.target.value)}
+                          spellCheck={false}
+                          placeholder={input.type === 'address' ? '0x…' : input.type.startsWith('uint') ? '0' : ''}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
@@ -516,7 +531,7 @@ export function Timelock(): JSX.Element {
                   <div className="flex flex-col gap-1">
                     <button className="btn btn-primary" onClick={handleExecute}
                       disabled={!evm.isConnected || !derivedCalldata}>Execute</button>
-                    {!evm.isConnected && <span className="text-[11px] text-on-surface-variant">Connect wallet to execute</span>}
+                    {!evm.isConnected && <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect Wallet</button>}
                     {evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
                   </div>
                 )}
@@ -658,7 +673,7 @@ const ROLE_COLORS: Record<RoleName, string> = {
 function RoleManagement({ timelockAddr, ops, evm }: {
   timelockAddr: string;
   ops: ReturnType<typeof useTimelockOps>;
-  evm: { isConnected: boolean; address: string | null; provider: import('ethers').BrowserProvider | null };
+  evm: { isConnected: boolean; address: string | null; provider: import('ethers').BrowserProvider | null; connect: () => Promise<void> };
 }): JSX.Element {
   const [walletRoles, setWalletRoles] = useState<Record<RoleName, boolean> | null>(null);
   const [roleHashes, setRoleHashes] = useState<Record<string, string> | null>(null);
@@ -718,7 +733,7 @@ function RoleManagement({ timelockAddr, ops, evm }: {
       {roleError && <div className="text-xs text-error mb-3">{roleError}</div>}
 
       {!evm.isConnected && (
-        <div className="text-xs text-on-surface-variant opacity-60">Connect wallet to check roles</div>
+        <button className="btn btn-sm btn-primary" onClick={() => evm.connect().catch(() => {})}>Connect Wallet to Check Roles</button>
       )}
 
       {walletRoles && (

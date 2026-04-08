@@ -19,7 +19,7 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
       result = await hooks.wiring.setEvmEnforcedOptions(home.contractAddr, remote.chain.eid, BigInt(gas));
     }
     setHomeTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('home');
   }
 
   async function handleRemote(): Promise<void> {
@@ -31,7 +31,7 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
       result = await hooks.wiring.setEvmEnforcedOptions(remote.contractAddr, home.chain.eid, BigInt(gas));
     }
     setRemoteTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('remote');
   }
 
   return (

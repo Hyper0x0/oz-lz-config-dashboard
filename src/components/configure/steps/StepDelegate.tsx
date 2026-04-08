@@ -23,7 +23,7 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
       result = await hooks.wiring.setDelegate(home.contractAddr, homeDelegate);
     }
     setHomeTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('home');
   }
 
   async function handleRemote(): Promise<void> {
@@ -35,7 +35,7 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
       result = await hooks.wiring.setDelegate(remote.contractAddr, remoteDelegate);
     }
     setRemoteTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('remote');
   }
 
   return (

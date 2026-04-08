@@ -72,7 +72,7 @@ export interface StepProps {
   remote: ChainSide;
   hooks: ConfigHooks;
   verifyResult: PathwayVerifyResult | null;
-  onTxSuccess: () => void;
+  onTxSuccess: (side?: 'home' | 'remote') => void;
 }
 
 // ── Explorer URL helper ─────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import OFTABI from '@/abis/evm/OFT.json';
 import ERC20ABI from '@/abis/evm/ERC20.json';
 import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo, PeerEntry } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
-import { feltToBytes32, evmToFelt } from '@/utils/cairoAddress';
+import { decodeContractError } from '@/utils/decodeError';
 
 const SEND_MSG_TYPE = 1;
 
@@ -23,7 +23,6 @@ interface OFTWiring {
   /** Query peers(eid) for every entry in eidList and return results. Zero bytes32 = null. */
   readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>) => Promise<PeerEntry[]>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
-  setEvmPeerToCairo: (adapterAddr: string, cairoEid: number, cairoAddrFelt: string) => Promise<TxState>;
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
   setRateLimit: (adapterAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
   setDelegate: (contractAddr: string, delegate: string) => Promise<TxState>;
@@ -37,8 +36,6 @@ interface OFTWiring {
   approveToken: (tokenAddr: string, spender: string, amount: bigint) => Promise<TxState>;
   /** Read ERC20 balance + allowance for the connected wallet */
   readTokenBalance: (tokenAddr: string, owner: string, spender: string) => Promise<{ balance: bigint; allowance: bigint; decimals: number }>;
-  /** TODO: implement when Cairo OFT contracts are deployed. */
-  setCairoPeer: (cairoOftAddr: string, adapterEid: number, adapterEvmAddr: string) => Promise<TxState>;
 }
 
 function adapterContract(addr: string, signerOrProvider: ContractRunner): IOFTAdapter {
@@ -94,27 +91,35 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     async (adapterAddr: string, peerEid: number, homeRpc: string): Promise<AdapterState> => {
       const provider = staticProvider(homeRpc);
       const c = adapterContract(adapterAddr, provider);
-      const [owner, token, peer, opts, rl, flight] = await Promise.all([
+      const [owner, token, peer, opts] = await Promise.all([
         c.owner(),
         c.token(),
         c.peers(peerEid),
         c.enforcedOptions(peerEid, SEND_MSG_TYPE),
-        c.rateLimits(peerEid),
-        c.getAmountCanBeSent(peerEid),
       ]);
+
+      // rateLimits() and getAmountCanBeSent() only exist on OFTMintBurnAdapter, not standard OFTs
+      let rateLimit = { amountInFlight: 0n, lastUpdated: 0, limit: 0n, window: 0 };
+      let amountInFlight = 0n;
+      let amountCanBeSent = 0n;
+      try {
+        const [rl, flight] = await Promise.all([
+          c.rateLimits(peerEid),
+          c.getAmountCanBeSent(peerEid),
+        ]);
+        rateLimit = { amountInFlight: rl[0], lastUpdated: Number(rl[1]), limit: rl[2], window: Number(rl[3]) };
+        amountInFlight = flight[0];
+        amountCanBeSent = flight[1];
+      } catch { /* standard OFT — no rate limits */ }
+
       return {
         owner,
         token,
         peer,
         enforcedOptionsSend: opts,
-        rateLimit: {
-          amountInFlight: rl[0],
-          lastUpdated: Number(rl[1]),
-          limit: rl[2],
-          window: Number(rl[3]),
-        },
-        amountInFlight: flight[0],
-        amountCanBeSent: flight[1],
+        rateLimit,
+        amountInFlight,
+        amountCanBeSent,
       };
     },
     [],
@@ -163,23 +168,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
-      }
-    },
-    [evmSigner],
-  );
-
-  const setEvmPeerToCairo = useCallback(
-    async (adapterAddr: string, cairoEid: number, cairoAddrFelt: string): Promise<TxState> => {
-      if (!evmSigner) return { status: 'error', message: 'Wallet not connected' };
-      const peerBytes32 = feltToBytes32(evmToFelt(cairoAddrFelt));
-      try {
-        const c = adapterContract(adapterAddr, evmSigner);
-        const tx = await c.setPeer(cairoEid, peerBytes32);
-        await tx.wait();
-        return { status: 'success', hash: tx.hash };
-      } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -196,7 +185,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -211,7 +200,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -226,7 +215,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -235,8 +224,8 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   const detectOFTType = useCallback(
     async (addr: string, rpc: string): Promise<'adapter' | 'oft'> => {
       const provider = staticProvider(rpc);
-      const c = adapterContract(addr, provider);
-      const tokenAddr = await c.token();
+      const c = new Contract(addr, ['function token() view returns (address)'], provider);
+      const tokenAddr = await c.token() as string;
       return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';
     },
     [],
@@ -266,7 +255,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -281,7 +270,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: String(err instanceof Error ? err.message : err) };
+        return { status: 'error', message: decodeContractError(err) };
       }
     },
     [evmSigner],
@@ -301,19 +290,6 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     [evmSigner],
   );
 
-  // ── Cairo side (scaffold) ─────────────────────────────────────────────────
-
-  const setCairoPeer = useCallback(
-    async (_cairoOftAddr: string, _adapterEid: number, _adapterEvmAddr: string): Promise<TxState> => {
-      // TODO: implement when Cairo OFT ABI is available.
-      // Expected:
-      //   const contract = new StarkContract(CairoOFTPeerABI, cairoOftAddr, starkAccount);
-      //   await contract.invoke('set_peer', [adapterEid, { low: evmToFelt(adapterEvmAddr).toString(), high: '0' }]);
-      return { status: 'error', message: 'Cairo wiring not yet implemented — contracts pending' };
-    },
-    [],
-  );
-
   return {
     readTokenInfo,
     readEvmSideInfo,
@@ -321,7 +297,6 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     readPeerState,
     readAllPeers,
     setEvmPeer,
-    setEvmPeerToCairo,
     setEvmEnforcedOptions,
     setRateLimit,
     setDelegate,
@@ -330,6 +305,5 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
     evmSend,
     approveToken,
     readTokenBalance,
-    setCairoPeer,
   };
 }

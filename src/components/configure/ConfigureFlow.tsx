@@ -80,9 +80,11 @@ interface CairoSideState {
   recvLib: boolean;
   enforcedOptions: boolean;
   peer: boolean;
+  sendDvn: boolean;
+  recvDvn: boolean;
 }
 
-const EMPTY_CAIRO: CairoSideState = { delegate: false, sendLib: false, recvLib: false, enforcedOptions: false, peer: false };
+const EMPTY_CAIRO: CairoSideState = { delegate: false, sendLib: false, recvLib: false, enforcedOptions: false, peer: false, sendDvn: false, recvDvn: false };
 
 // ── Derive step statuses from verify result + cairo reads ───────────────────
 
@@ -131,8 +133,8 @@ function deriveStatuses(
     dvn: {
       home: homeCheck('dvn',
         checkLabel('DVNs configured (send side)') && checkLabel('Executor configured'),
-        false), // No DVN read method for Starknet yet — falls back to tx tracking
-      remote: remoteCheck('dvn', checkLabel('DVNs configured (receive side)'), false),
+        homeCairo.sendDvn),
+      remote: remoteCheck('dvn', checkLabel('DVNs configured (receive side)'), remoteCairo.recvDvn),
     },
     options: {
       home: homeCheck('options', checkLabel('Enforced options set (send side)'), homeCairo.enforcedOptions),
@@ -213,12 +215,35 @@ export function ConfigureFlow({
           co.readPeer(contractAddr, remoteEid, rpc),
         ]);
         if (tick !== cairoReadRef.current) return; // stale
+
+        // Read DVN configs if we have library addresses
+        const sendLibAddr = sendLib.status === 'fulfilled' ? sendLib.value : null;
+        const recvLibAddr = recvLibResult.status === 'fulfilled' ? (recvLibResult.value as any)?.lib : null;
+
+        let sendDvn = false;
+        let recvDvn = false;
+        if (sendLibAddr) {
+          try {
+            const uln = await ce.readSendUlnConfig(ep, contractAddr, sendLibAddr, remoteEid, rpc);
+            sendDvn = !!(uln && uln.requiredDVNCount > 0);
+          } catch { /* ignore */ }
+        }
+        if (recvLibAddr) {
+          try {
+            const uln = await ce.readReceiveUlnConfig(ep, contractAddr, recvLibAddr, remoteEid, rpc);
+            recvDvn = !!(uln && uln.requiredDVNCount > 0);
+          } catch { /* ignore */ }
+        }
+        if (tick !== cairoReadRef.current) return; // stale
+
         setter({
           delegate: delegate.status === 'fulfilled' && !!delegate.value,
           sendLib: sendLib.status === 'fulfilled' && !!sendLib.value,
           recvLib: recvLibResult.status === 'fulfilled' && !!(recvLibResult.value as any)?.lib,
           enforcedOptions: enforcedOpts.status === 'fulfilled' && !!enforcedOpts.value,
           peer: peerResult.status === 'fulfilled' && !!(peerResult.value as any)?.peer && (peerResult.value as any).peer !== ZERO64,
+          sendDvn,
+          recvDvn,
         });
       } catch { /* ignore */ }
     }
@@ -262,7 +287,7 @@ export function ConfigureFlow({
               remote={remoteSide}
               hooks={hooks}
               verifyResult={verifyResult}
-              onTxSuccess={() => handleTxSuccess(step.id, 'home')}
+              onTxSuccess={(side?: 'home' | 'remote') => handleTxSuccess(step.id, side || 'home')}
             />
           </StepCard>
         );

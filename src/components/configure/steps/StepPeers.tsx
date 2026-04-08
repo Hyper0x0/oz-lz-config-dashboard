@@ -30,7 +30,7 @@ export function StepPeers({ home, remote, hooks, verifyResult, onTxSuccess }: St
       result = await hooks.wiring.setEvmPeer(home.contractAddr, remote.chain.eid, remote.contractAddr);
     }
     setHomeTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('home');
   }
 
   async function handleRemote(): Promise<void> {
@@ -42,7 +42,7 @@ export function StepPeers({ home, remote, hooks, verifyResult, onTxSuccess }: St
       result = await hooks.wiring.setEvmPeer(remote.contractAddr, home.chain.eid, home.contractAddr);
     }
     setRemoteTx(result);
-    if (result.status === 'success') onTxSuccess();
+    if (result.status === 'success') onTxSuccess('remote');
   }
 
   return (

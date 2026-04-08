@@ -72,6 +72,72 @@ export function encodeExecutorConfig(params: ExecutorConfigParams): string[] {
   ];
 }
 
+// ── Decoders — parse felt252[] returned by get_send_config / get_receive_config ──
+
+export interface DecodedStarknetUln {
+  confirmations: bigint;
+  requiredDVNCount: number;
+  requiredDVNs: string[];
+  optionalDVNCount: number;
+  optionalDVNs: string[];
+  optionalDVNThreshold: number;
+}
+
+export interface DecodedStarknetExecutor {
+  maxMessageSize: number;
+  executor: string;
+}
+
+/**
+ * Decode a Starknet UlnConfig from a felt252[] array.
+ * Layout (must match Cairo Serde):
+ *   confirmations, has_confirmations,
+ *   required_dvns.len, ...required_dvns, has_required_dvns,
+ *   optional_dvns.len, ...optional_dvns,
+ *   optional_dvn_threshold, has_optional_dvns
+ */
+export function decodeStarknetUln(felts: string[]): DecodedStarknetUln | null {
+  try {
+    let i = 0;
+    const confirmations = BigInt(felts[i++]);
+    i++; // has_confirmations
+    const reqLen = Number(BigInt(felts[i++]));
+    const requiredDVNs: string[] = [];
+    for (let j = 0; j < reqLen; j++) requiredDVNs.push(felts[i++]);
+    i++; // has_required_dvns
+    const optLen = Number(BigInt(felts[i++]));
+    const optionalDVNs: string[] = [];
+    for (let j = 0; j < optLen; j++) optionalDVNs.push(felts[i++]);
+    const optionalDVNThreshold = Number(BigInt(felts[i++]));
+    // i++ has_optional_dvns (ignored)
+    return {
+      confirmations,
+      requiredDVNCount: reqLen,
+      requiredDVNs,
+      optionalDVNCount: optLen,
+      optionalDVNs,
+      optionalDVNThreshold,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decode a Starknet ExecutorConfig from a felt252[] array.
+ * Layout: max_message_size, executor
+ */
+export function decodeStarknetExecutor(felts: string[]): DecodedStarknetExecutor | null {
+  try {
+    return {
+      maxMessageSize: Number(BigInt(felts[0])),
+      executor: felts[1],
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Sort DVN addresses ascending (required by the ULN contract). */
 export function sortDvns(addresses: string[]): string[] {
   return [...addresses].sort((a, b) => {
