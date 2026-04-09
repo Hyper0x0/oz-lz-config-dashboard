@@ -385,16 +385,16 @@ export function OFTWiring(): JSX.Element {
                 {fetching ? 'Fetching…' : 'Fetch Info'}
               </button>
             )}
-            {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
-              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmHome.name}</span>
-            )}
-            {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
-              <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmHome.chainId)}>
-                Switch wallet to {evmHome.name}
-              </button>
-            )}
+            {/* EVM wallet status — show for whichever side is EVM */}
+            {(() => {
+              const evmSide = evmHome ?? evmRemote;
+              if (!evmSide || !evm.isConnected) return null;
+              return evm.chainId === evmSide.chainId
+                ? <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmSide.name}</span>
+                : <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmSide.chainId)}>Switch wallet to {evmSide.name}</button>;
+            })()}
             {hasStarknet && stark.isConnected && (
-              <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Starknet connected</span>
+              <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet connected</span>
             )}
           </div>
 
@@ -421,7 +421,7 @@ export function OFTWiring(): JSX.Element {
                 onClick={() => setTab('configure')}>Configure</button>
             </div>
             {tab === 'verify' && bothEvm && evmHome && evmRemote && (
-              <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
+              <VerifyPanel homeChain={evmHome} remoteChain={evmRemote} homeAddress={homeAddr} remoteAddress={remoteAddr} verifying={verifying} result={verifyResult} onVerify={handleVerify} isAdapter={mode === 'bridge-oft'} />
             )}
             {tab === 'verify' && hasStarknet && (
               <StarknetVerifyPanel
@@ -778,7 +778,10 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             <button className="btn btn-ghost text-xs" onClick={() => {
               downloadJson({
                 exportedAt: new Date().toISOString(),
-                pathway: { evm: evmChainData.name, starknet: starkChainData.name },
+                oapp: {
+                  source: { chain: home.name, address: homeAddr, type: isStarknet(home) ? 'starknet' : 'evm' },
+                  destination: { chain: remote.name, address: remoteAddr, type: isStarknet(remote) ? 'starknet' : 'evm' },
+                },
                 evmSide: evmState ? {
                   sendLib: evmState.sendLib, recvLib: evmState.recvLib, recvLibIsDefault: evmState.recvLibIsDefault,
                   executor: evmState.executor ? { executor: evmState.executor.executor, maxMessageSize: evmState.executor.maxMessageSize } : null,
@@ -1058,10 +1061,10 @@ function optionsToJson(hex: string | null) {
   return decoded ? { raw: hex, lzReceiveGas: decoded.gas, ...(decoded.value ? { nativeValue: decoded.value } : {}) } : hex;
 }
 
-function exportEvmConfig(result: PathwayVerifyResult, homeLabel: string, remoteLabel: string) {
+function exportEvmConfig(result: PathwayVerifyResult, homeLabel: string, remoteLabel: string, homeAddress: string, remoteAddress: string) {
   downloadJson({
     exportedAt: new Date().toISOString(),
-    pathway: { source: homeLabel, destination: remoteLabel },
+    oapp: { source: { chain: homeLabel, address: homeAddress }, destination: { chain: remoteLabel, address: remoteAddress } },
     'A_to_B': {
       home_send: { sendLib: result.homeSendLib, executor: executorToJson(result.homeExecutor), dvn: ulnToJson(result.homeDVN), delegate: result.homeDelegate, peer: result.homePeer, enforcedOptions: optionsToJson(result.homeEnforcedOptions), rateLimit: result.homeRateLimit ? { limit: String(result.homeRateLimit.limit), window: result.homeRateLimit.window } : null },
       remote_receive: { receiveLib: result.remoteReceiveLib, receiveLibIsDefault: result.remoteReceiveLibIsDefault, dvn: ulnToJson(result.remoteDVN), peer: result.remotePeer, enforcedOptions: optionsToJson(result.remoteEnforcedOptions) },
@@ -1076,8 +1079,9 @@ function exportEvmConfig(result: PathwayVerifyResult, homeLabel: string, remoteL
 
 // ── Verify panel ──────────────────────────────────────────────────────────────
 
-function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAdapter = true }: {
+function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verifying, result, onVerify, isAdapter = true }: {
   homeChain: LZChain; remoteChain: LZChain;
+  homeAddress: string; remoteAddress: string;
   verifying: boolean; result: PathwayVerifyResult | null;
   onVerify: () => void;
   isAdapter?: boolean;
@@ -1113,7 +1117,7 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
         </div>
         <div className="flex gap-2">
           {result && !result.error && (
-            <button className="btn btn-ghost text-xs" onClick={() => exportEvmConfig(result, homeChain.name, remoteChain.name)}>
+            <button className="btn btn-ghost text-xs" onClick={() => exportEvmConfig(result, homeChain.name, remoteChain.name, homeAddress, remoteAddress)}>
               Export config
             </button>
           )}

@@ -134,15 +134,29 @@ export function OFTs(): JSX.Element {
             setWalletBalance(`${whole}.${frac}`);
           }
         } else if (starkHome) {
+          // Try to read decimals from Cairo OFT (default 18 if unavailable)
+          let dec = 18;
+          let tokenAddr = homeAddr;
+          try {
+            const detect = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc);
+            if (detect.type === 'adapter' && detect.tokenAddr) tokenAddr = detect.tokenAddr;
+          } catch { /* */ }
+          try {
+            const { RpcProvider: RP, Contract: SC } = await import('starknet');
+            const p = new RP({ nodeUrl: starkHome.rpc });
+            const result = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] });
+            if (result[0]) dec = Number(BigInt(result[0]));
+          } catch { /* default 18 */ }
+          setDecimals(dec);
           if (stark.address) {
-            const bal = await cairo.cairoBalance(homeAddr, stark.address, starkHome.rpc);
-            const whole = bal / BigInt(10 ** 18);
-            const frac = (bal % BigInt(10 ** 18)).toString().padStart(18, '0').slice(0, 4);
+            const bal = await cairo.cairoBalance(tokenAddr, stark.address, starkHome.rpc);
+            const whole = bal / BigInt(10 ** dec);
+            const frac = (bal % BigInt(10 ** dec)).toString().padStart(dec, '0').slice(0, 4);
             setWalletBalance(`${whole}.${frac}`);
           }
           // Try to read token symbol from Cairo
           try {
-            const info = await cairo.readCairoTokenInfo(homeAddr, starkHome.rpc);
+            const info = await cairo.readCairoTokenInfo(tokenAddr, starkHome.rpc);
             if (info.symbol) setTokenSymbol(info.symbol);
           } catch { /* */ }
         }
@@ -235,17 +249,13 @@ export function OFTs(): JSX.Element {
 
         {/* Wallet hints + switch chain */}
         <div className="flex items-center gap-3 mt-3 flex-wrap">
-          {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
-            <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmHome.name}</span>
-          )}
-          {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
-            <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmHome.chainId)}>
-              Switch wallet to {evmHome.name}
-            </button>
-          )}
-          {evmRemote && evm.isConnected && evm.chainId === evmRemote.chainId && !evmHome && (
-            <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmRemote.name}</span>
-          )}
+          {(() => {
+            const evmSide = evmHome ?? evmRemote;
+            if (!evmSide || !evm.isConnected) return null;
+            return evm.chainId === evmSide.chainId
+              ? <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmSide.name}</span>
+              : <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmSide.chainId)}>Switch wallet to {evmSide.name}</button>;
+          })()}
           {hasStarknet && stark.isConnected && (
             <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet connected</span>
           )}
