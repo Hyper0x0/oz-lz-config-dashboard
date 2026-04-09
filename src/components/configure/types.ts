@@ -90,8 +90,8 @@ const EVM_EXPLORERS: Record<number, string> = {
 export function explorerTxUrl(side: ChainSide): string | undefined {
   if (side.kind === 'starknet') {
     return side.starkChain?.isTestnet
-      ? 'https://sepolia.starkscan.co/tx/'
-      : 'https://starkscan.co/tx/';
+      ? 'https://sepolia.voyager.online/tx/'
+      : 'https://voyager.online/tx/';
   }
   if (side.evmChain) return EVM_EXPLORERS[side.evmChain.chainId];
   return undefined;

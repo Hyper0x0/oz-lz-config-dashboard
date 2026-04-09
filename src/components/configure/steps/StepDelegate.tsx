@@ -46,9 +46,9 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
       </p>
 
       <div className="step-actions">
-        {/* Home side */}
+        {/* Source side */}
         <div>
-          <div className="label mb-1">Home — {home.chainLabel}</div>
+          <div className="label mb-1">Source — {home.chainLabel}</div>
           {verifyResult?.homeDelegate && (
             <div className="text-xs text-[var(--text-muted)] mb-2">
               Current: <span className="font-mono text-[11px]" style={{ color: 'var(--text)' }}>{verifyResult.homeDelegate}</span>
@@ -62,9 +62,9 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
           <div className="mt-1.5"><TxStatus state={homeTx} explorerUrl={explorerTxUrl(home)} /></div>
         </div>
 
-        {/* Remote side */}
+        {/* Destination side */}
         <div>
-          <div className="label mb-1">Remote — {remote.chainLabel}</div>
+          <div className="label mb-1">Destination — {remote.chainLabel}</div>
           {verifyResult?.remoteDelegate && (
             <div className="text-xs text-[var(--text-muted)] mb-2">
               Current: <span className="font-mono text-[11px]" style={{ color: 'var(--text)' }}>{verifyResult.remoteDelegate}</span>

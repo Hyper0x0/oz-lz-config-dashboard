@@ -46,15 +46,41 @@ export function StepLibraries({ home, remote, hooks, verifyResult, onTxSuccess }
     remoteEid: number,
     isSend: boolean,
     setTx: (s: TxState) => void,
+    /** Current on-chain send lib (to skip if same value) */
+    currentSendLib?: string | null,
+    /** Current on-chain recv lib (to skip if same value) */
+    currentRecvLib?: string | null,
   ): Promise<void> {
     setTx({ status: 'pending' });
     let result: TxState;
     if (side.kind === 'starknet') {
-      // Starknet: set both send + receive in one tx
-      result = await hooks.cairoEndpoint.setLibraries(
-        side.starkChain!.endpoint, side.contractAddr, remoteEid,
-        lib, Number(gracePeriod), side.starkChain!.rpc,
-      );
+      // Starknet: check if send/recv already match to avoid SAME_VALUE revert
+      const sendMatch = currentSendLib && currentSendLib.toLowerCase() === lib.toLowerCase();
+      const recvMatch = currentRecvLib && currentRecvLib.toLowerCase() === lib.toLowerCase();
+      if (sendMatch && recvMatch) {
+        setTx({ status: 'success', hash: 'already-set' });
+        onTxSuccess(side === home ? 'home' : 'remote');
+        return;
+      }
+      if (sendMatch) {
+        // Only set receive
+        result = await hooks.cairoEndpoint.setReceiveLibrary(
+          side.starkChain!.endpoint, side.contractAddr, remoteEid,
+          lib, Number(gracePeriod), side.starkChain!.rpc,
+        );
+      } else if (recvMatch) {
+        // Only set send
+        result = await hooks.cairoEndpoint.setSendLibrary(
+          side.starkChain!.endpoint, side.contractAddr, remoteEid,
+          lib, side.starkChain!.rpc,
+        );
+      } else {
+        // Set both
+        result = await hooks.cairoEndpoint.setLibraries(
+          side.starkChain!.endpoint, side.contractAddr, remoteEid,
+          lib, Number(gracePeriod), side.starkChain!.rpc,
+        );
+      }
     } else if (isSend) {
       result = await epConfig.setSendLib(side.evmChain!.endpoint, side.contractAddr, remoteEid, lib);
     } else {
@@ -68,8 +94,15 @@ export function StepLibraries({ home, remote, hooks, verifyResult, onTxSuccess }
     label: string, side: typeof home, lib: string, setLib: (v: string) => void,
     currentLib: string | null | undefined, isDefault: boolean | undefined,
     isSend: boolean, tx: TxState, setTx: (s: TxState) => void, remoteEid: number,
+    /** For Starknet: current on-chain send lib to skip if same */
+    starkCurrentSend?: string | null,
+    /** For Starknet: current on-chain recv lib to skip if same */
+    starkCurrentRecv?: string | null,
   ): JSX.Element {
     const isStark = side.kind === 'starknet';
+    const alreadySet = isStark && starkCurrentSend && starkCurrentRecv
+      && starkCurrentSend.toLowerCase() === lib.toLowerCase()
+      && starkCurrentRecv.toLowerCase() === lib.toLowerCase();
     return (
       <div>
         <div className="label mb-1">
@@ -96,9 +129,12 @@ export function StepLibraries({ home, remote, hooks, verifyResult, onTxSuccess }
               onChange={(e) => setGracePeriod(e.target.value)} />
           </div>
         )}
+        {alreadySet && (
+          <div className="text-xs text-secondary mb-2">✓ Library already set to this value</div>
+        )}
         <NetworkHint side={side} />
-        <button className="btn btn-primary" disabled={!side.isConnected || side.needsNetworkSwitch || !lib}
-          onClick={() => handleSetLib(side, lib, remoteEid, isSend, setTx)}>
+        <button className="btn btn-primary" disabled={!side.isConnected || side.needsNetworkSwitch || !lib || !!alreadySet}
+          onClick={() => handleSetLib(side, lib, remoteEid, isSend, setTx, starkCurrentSend, starkCurrentRecv)}>
           {isStark ? 'Set Send & Receive Library' : `Set ${label}`}
         </button>
         <div className="mt-1.5"><TxStatus state={tx} explorerUrl={explorerTxUrl(side)} /></div>
@@ -137,20 +173,24 @@ export function StepLibraries({ home, remote, hooks, verifyResult, onTxSuccess }
       {direction === 'AtoB' && (
         <div className="step-actions">
           {renderSide('Send Library', home, abSendLib, setAbSendLib,
-            verifyResult?.homeSendLib, false, true, abSendTx, setAbSendTx, remote.chain.eid)}
+            verifyResult?.homeSendLib, false, true, abSendTx, setAbSendTx, remote.chain.eid,
+            verifyResult?.homeSendLib, verifyResult?.homeReceiveLib)}
           {renderSide('Receive Library', remote, abRecvLib, setAbRecvLib,
             verifyResult?.remoteReceiveLib, verifyResult?.remoteReceiveLibIsDefault,
-            false, abRecvTx, setAbRecvTx, home.chain.eid)}
+            false, abRecvTx, setAbRecvTx, home.chain.eid,
+            verifyResult?.remoteSendLib, verifyResult?.remoteReceiveLib)}
         </div>
       )}
 
       {direction === 'BtoA' && (
         <div className="step-actions">
           {renderSide('Send Library', remote, baSendLib, setBaSendLib,
-            verifyResult?.remoteSendLib, false, true, baSendTx, setBaSendTx, home.chain.eid)}
+            verifyResult?.remoteSendLib, false, true, baSendTx, setBaSendTx, home.chain.eid,
+            verifyResult?.remoteSendLib, verifyResult?.remoteReceiveLib)}
           {renderSide('Receive Library', home, baRecvLib, setBaRecvLib,
             verifyResult?.homeReceiveLib, verifyResult?.homeReceiveLibIsDefault,
-            false, baRecvTx, setBaRecvTx, remote.chain.eid)}
+            false, baRecvTx, setBaRecvTx, remote.chain.eid,
+            verifyResult?.homeSendLib, verifyResult?.homeReceiveLib)}
         </div>
       )}
     </div>

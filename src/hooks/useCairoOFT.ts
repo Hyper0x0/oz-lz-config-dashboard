@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { RpcProvider, CallData, Contract } from 'starknet';
 import type { WalletAccount } from 'starknet';
 import type { TxState, PeerEntry } from '@/types';
-import { decodeContractError } from '@/utils/decodeError';
+import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import StarknetOFTABI from '@/abis/svm/OFT.json';
 import StarknetOFTAdapterABI from '@/abis/svm/OFTAdapter.json';
 
@@ -52,7 +52,8 @@ export interface CairoOFTOps {
   /** Query get_peer for every entry in eidList in parallel. Returns PeerEntry[]. */
   readAllPeers: (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string) => Promise<PeerEntry[]>;
   /** Read enforced options from the Cairo OFT. Returns true if non-empty ByteArray is set. */
-  readEnforcedOptions: (cairoOftAddr: string, evmEid: number, rpc: string) => Promise<boolean>;
+  /** Returns the enforced options as a hex string (LZ options format), or null if not set. */
+  readEnforcedOptions: (cairoOftAddr: string, evmEid: number, rpc: string) => Promise<string | null>;
   setPeer: (cairoOftAddr: string, evmEid: number, evmBridgeAddr: string) => Promise<TxState>;
   /** Quote the LZ fee for a Cairo OFT send */
   cairoQuoteSend: (cairoOftAddr: string, dstEid: number, toEvmAddr: string, amountLD: bigint, minAmountLD: bigint, rpc: string) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
@@ -83,23 +84,33 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     });
   }, []);
 
-  const readEnforcedOptions = useCallback(async (cairoOftAddr: string, evmEid: number, rpc: string): Promise<boolean> => {
+  const readEnforcedOptions = useCallback(async (cairoOftAddr: string, evmEid: number, rpc: string): Promise<string | null> => {
     try {
       const provider = new RpcProvider({ nodeUrl: rpc });
-      // Use raw callContract to avoid starknet.js ByteArray parsing issues
       const result = await provider.callContract({
         contractAddress: cairoOftAddr,
         entrypoint: 'get_enforced_options',
         calldata: CallData.compile([evmEid, 1 /* MSG_TYPE_SEND */]),
       });
       // Raw result for ByteArray: [data_len, ...data_felts, pending_word, pending_word_len]
-      if (!result || result.length === 0) return false;
+      if (!result || result.length === 0) return null;
       const dataLen = Number(result[0]);
       const pendingWord = result[1 + dataLen];
       const pendingWordLen = Number(result[2 + dataLen] ?? 0);
-      return dataLen > 0 || (pendingWordLen > 0 && BigInt(pendingWord) !== 0n);
+      const isEmpty = dataLen === 0 && (pendingWordLen === 0 || BigInt(pendingWord) === 0n);
+      if (isEmpty) return null;
+      // Reconstruct hex from ByteArray felts
+      let hex = '';
+      for (let i = 1; i <= dataLen; i++) {
+        const felt = BigInt(result[i]);
+        hex += felt.toString(16).padStart(62, '0'); // 31 bytes = 62 hex chars
+      }
+      if (pendingWordLen > 0 && BigInt(pendingWord) !== 0n) {
+        hex += BigInt(pendingWord).toString(16).padStart(pendingWordLen * 2, '0');
+      }
+      return '0x' + hex;
     } catch {
-      return false;
+      return null;
     }
   }, []);
 
@@ -115,7 +126,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: cairoOftAddr, functionName: 'set_peer', functionCall: `set_peer(${evmEid}, bytes32(${evmBridgeAddr}))` }) };
     }
   }, [account]);
 
@@ -227,7 +238,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: cairoOftAddr, functionName: 'send (Cairo OFT)', functionCall: `send({ dstEid: ${dstEid}, to: ${toEvmAddr}, amountLD: ${amountLD}, minAmountLD: ${minAmountLD} }, { nativeFee: ${fee.nativeFee}, lzTokenFee: ${fee.lzTokenFee} })` }) };
     }
   }, [account]);
 

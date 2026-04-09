@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { Contract, RpcProvider, CallData } from 'starknet';
 import type { WalletAccount } from 'starknet';
 import type { TxState } from '@/types';
-import { decodeContractError } from '@/utils/decodeError';
+import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
 import {
   CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN,
@@ -101,7 +101,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: oappAddr, functionName: 'set_enforced_options', functionCall: `set_enforced_options([{ eid: ${remoteEid}, msg_type: ${MSG_TYPE_SEND}, gas: ${gasLimit} }])` }) };
     }
   }, [account]);
 
@@ -119,7 +119,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_library + set_receive_library', functionCall: `set_send_library(${oappAddr}, ${remoteEid}, ${libAddr}) + set_receive_library(${oappAddr}, ${remoteEid}, ${libAddr}, ${gracePeriod})` }) };
     }
   }, [account]);
 
@@ -140,7 +140,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_configs (ULN + Executor)', functionCall: `set_send_configs(${oappAddr}, ${libAddr}, [{ eid: ${remoteEid}, ULN: { dvns: [${uln.requiredDvns.join(', ')}], confirmations: ${uln.confirmations} } }, { eid: ${remoteEid}, Executor: { executor: ${executor.executor}, maxMsgSize: ${executor.maxMessageSize} } }])` }) };
     }
   }, [account]);
 
@@ -156,7 +156,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_library', functionCall: `set_send_library(${oappAddr}, ${remoteEid}, ${libAddr})` }) };
     }
   }, [account]);
 
@@ -172,7 +172,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_receive_library', functionCall: `set_receive_library(${oappAddr}, ${remoteEid}, ${libAddr}, ${gracePeriod})` }) };
     }
   }, [account]);
 
@@ -191,7 +191,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_configs (ULN)', functionCall: `set_send_configs(${oappAddr}, ${libAddr}, [{ eid: ${remoteEid}, ULN: { dvns: [${params.requiredDvns.join(', ')}], confirmations: ${params.confirmations} } }])` }) };
     }
   }, [account]);
 
@@ -210,7 +210,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_receive_configs (ULN)', functionCall: `set_receive_configs(${oappAddr}, ${libAddr}, [{ eid: ${remoteEid}, ULN: { dvns: [${params.requiredDvns.join(', ')}], confirmations: ${params.confirmations} } }])` }) };
     }
   }, [account]);
 
@@ -229,7 +229,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_configs (Executor)', functionCall: `set_send_configs(${oappAddr}, ${libAddr}, [{ eid: ${remoteEid}, Executor: { executor: ${params.executor}, maxMsgSize: ${params.maxMessageSize} } }])` }) };
     }
   }, [account]);
 
@@ -245,7 +245,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       await account.waitForTransaction(tx.transaction_hash);
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
-      return { status: 'error', message: decodeContractError(e) };
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: oappAddr, functionName: 'set_delegate', functionCall: `set_delegate(${delegateAddr})` }) };
     }
   }, [account]);
 

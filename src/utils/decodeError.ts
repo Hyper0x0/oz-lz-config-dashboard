@@ -87,3 +87,41 @@ export function decodeContractError(err: unknown): string {
   // Fallback: truncate
   return raw.length > 300 ? raw.slice(0, 300) + '…' : raw;
 }
+
+/**
+ * Extract structured error details from an ethers or starknet error.
+ * Used to build the `details` field on TxState errors.
+ */
+export function extractErrorDetails(
+  err: unknown,
+  meta: { contractAddr?: string; functionName?: string; functionCall?: string },
+): import('@/types').TxErrorDetails {
+  const raw = err instanceof Error ? err.message : String(err);
+  const details: import('@/types').TxErrorDetails = {
+    contractAddr: meta.contractAddr,
+    functionName: meta.functionName,
+    functionCall: meta.functionCall,
+    rawError: raw.length > 2000 ? raw.slice(0, 2000) + '…' : raw,
+  };
+
+  // ethers v6: error.transaction?.data contains the encoded calldata
+  const anyErr = err as Record<string, unknown>;
+  const tx = anyErr.transaction as Record<string, unknown> | undefined;
+  if (tx?.data && typeof tx.data === 'string') {
+    details.callData = tx.data;
+  }
+  // ethers v6 sometimes nests inside info.error.transaction
+  const info = anyErr.info as Record<string, unknown> | undefined;
+  const infoErr = info?.error as Record<string, unknown> | undefined;
+  const infoTx = infoErr?.transaction as Record<string, unknown> | undefined;
+  if (!details.callData && infoTx?.data && typeof infoTx.data === 'string') {
+    details.callData = infoTx.data;
+  }
+  // Starknet: error may carry calldata in the request body
+  if (!details.callData && typeof raw === 'string' && raw.includes('calldata')) {
+    const match = raw.match(/"calldata"\s*:\s*\[([^\]]+)\]/);
+    if (match) details.callData = `[${match[1]}]`;
+  }
+
+  return details;
+}

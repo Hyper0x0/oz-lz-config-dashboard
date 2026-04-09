@@ -4,10 +4,11 @@ import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import timelockTarget from '@/config/timelockTarget.json';
 import { useWallet } from '@/context/WalletContext';
 import { useTimelockOps } from '@/hooks/useTimelockOps';
+import { useCairoTimelock } from '@/hooks/useCairoTimelock';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { ChainBadge } from '@/components/ChainBadge';
-import { CONTRACTS, ARBISCAN_API_KEY } from '@/config/chains';
+import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown } from '@/utils/timelock';
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
@@ -95,13 +96,30 @@ const TIMELOCK_CHAINS = [
   { id: 11155111,name: 'Sepolia',           rpc: 'https://rpc.sepolia.org',            explorer: 'sepolia.etherscan.io' },
 ];
 
-export function Timelock(): JSX.Element {
-  const { evm } = useWallet();
-  const ops = useTimelockOps(evm.signer);
+type ChainType = 'evm' | 'starknet';
 
-  // Chain: auto-detect from wallet, with manual override
+const STARK_CHAINS = [
+  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
+  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
+];
+
+export function Timelock(): JSX.Element {
+  const { evm, stark } = useWallet();
+  const ops = useTimelockOps(evm.signer);
+  const cairoOps = useCairoTimelock(stark.account);
+  const [chainType, setChainType] = useState<ChainType>('evm');
+  const [starkChainId, setStarkChainId] = useState('SN_SEPOLIA');
+  const starkChain = STARK_CHAINS.find((c) => c.id === starkChainId) ?? STARK_CHAINS[1];
+
+  // Chain: auto-detect from wallet, with manual override (persisted)
   const walletChain = TIMELOCK_CHAINS.find((c) => c.id === evm.chainId);
-  const [manualChainId, setManualChainId] = useState<number | null>(null);
+  const [manualChainId, setManualChainId] = useState<number | null>(() => {
+    try { const s = localStorage.getItem('ozlz_timelock_chain'); return s ? Number(s) : null; } catch { return null; }
+  });
+  function setAndPersistChain(id: number | null) {
+    setManualChainId(id);
+    try { if (id) localStorage.setItem('ozlz_timelock_chain', String(id)); else localStorage.removeItem('ozlz_timelock_chain'); } catch { /* */ }
+  }
   const activeChainId = manualChainId ?? evm.chainId ?? 421614;
   const selectedChain = TIMELOCK_CHAINS.find((c) => c.id === activeChainId) ?? TIMELOCK_CHAINS[2];
 
@@ -177,39 +195,64 @@ export function Timelock(): JSX.Element {
   const [scanning,     setScanning]     = useState(false);
   const [scanError,    setScanError]    = useState<string | null>(null);
   const [scanFromBlock, setScanFromBlock] = useState('');
+  const [opFilter, setOpFilter] = useState<'all' | 'Waiting' | 'Ready' | 'Done'>('all');
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   async function loadMinDelay(): Promise<void> {
     if (!timelockAddr) return;
-    const d = await ops.getMinDelay(timelockAddr, evm.provider ?? undefined);
-    setMinDelay(formatDelay(Number(d)));
-    setDelay(String(d));
+    if (chainType === 'starknet') {
+      const d = await cairoOps.getMinDelay(timelockAddr, starkChain.rpc);
+      setMinDelay(formatDelay(Number(d)));
+      setDelay(String(d));
+    } else {
+      const d = await ops.getMinDelay(timelockAddr, evm.provider ?? undefined);
+      setMinDelay(formatDelay(Number(d)));
+      setDelay(String(d));
+    }
   }
 
   async function handleSchedule(): Promise<void> {
     if (!timelockAddr || !calldata) return;
     setScheduleTx({ status: 'pending' });
-    const result = await ops.schedule(timelockAddr, 0n, calldata, predecessor, salt, BigInt(delay));
-    setScheduleTx(result);
+    if (chainType === 'starknet') {
+      // Cairo schedule expects Call struct {to, selector, calldata}
+      // Target = the timelock itself (same as EVM pattern), selector from the encoded calldata
+      const fnSelector = calldata.slice(0, 10); // first 4 bytes as selector
+      const result = await cairoOps.schedule(timelockAddr, timelockAddr, fnSelector, [calldata], predecessor, salt, Number(delay));
+      setScheduleTx(result);
+    } else {
+      const result = await ops.schedule(timelockAddr, 0n, calldata, predecessor, salt, BigInt(delay));
+      setScheduleTx(result);
+    }
   }
 
   async function handleLookup(): Promise<void> {
     if (!timelockAddr || !lookupHash) return;
     setOpState(null); setOpEta(null); setLookupDebug(null); setLookupError(null);
     try {
-      const wp = evm.provider ?? undefined;
-      const ts = await ops.getTimestamp(timelockAddr, lookupHash, wp);
-      const tsNum = Number(ts);
-      const now = Math.floor(Date.now() / 1000);
-      const network = wp ? await wp.getNetwork() : null;
-      setLookupDebug(`contract: ${timelockAddr} | hash: ${lookupHash.slice(0, 14)}… | timestamp: ${tsNum} | chain: ${network?.chainId ?? 'public RPC'}`);
-      let state: OperationState;
-      if (tsNum === 0) state = 'Unset';
-      else if (tsNum === 1) state = 'Done';
-      else if (tsNum <= now) state = 'Ready';
-      else state = 'Waiting';
-      setOpState(state);
-      if (state === 'Waiting') setOpEta(formatCountdown(tsNum));
+      if (chainType === 'starknet') {
+        const state = await cairoOps.getOperationState(timelockAddr, lookupHash, starkChain.rpc);
+        setOpState(state);
+        if (state === 'Waiting') {
+          const ts = await cairoOps.getTimestamp(timelockAddr, lookupHash, starkChain.rpc);
+          setOpEta(formatCountdown(Number(ts)));
+        }
+        setLookupDebug(`contract: ${timelockAddr} | hash: ${lookupHash.slice(0, 14)}… | chain: ${starkChain.name}`);
+      } else {
+        const wp = evm.provider ?? undefined;
+        const ts = await ops.getTimestamp(timelockAddr, lookupHash, wp);
+        const tsNum = Number(ts);
+        const now = Math.floor(Date.now() / 1000);
+        const network = wp ? await wp.getNetwork() : null;
+        setLookupDebug(`contract: ${timelockAddr} | hash: ${lookupHash.slice(0, 14)}… | timestamp: ${tsNum} | chain: ${network?.chainId ?? 'public RPC'}`);
+        let state: OperationState;
+        if (tsNum === 0) state = 'Unset';
+        else if (tsNum === 1) state = 'Done';
+        else if (tsNum <= now) state = 'Ready';
+        else state = 'Waiting';
+        setOpState(state);
+        if (state === 'Waiting') setOpEta(formatCountdown(tsNum));
+      }
     } catch (e) {
       setLookupError(e instanceof Error ? e.message : String(e));
     }
@@ -222,8 +265,14 @@ export function Timelock(): JSX.Element {
     const s = derivedSalt ?? salt;
     if (!target || !data) return;
     setExecuteTx({ status: 'pending' });
-    const result = await ops.execute(target, 0n, data, pred, s);
-    setExecuteTx(result);
+    if (chainType === 'starknet') {
+      const fnSelector = data.slice(0, 10);
+      const result = await cairoOps.execute(timelockAddr, target, fnSelector, [data], pred, s);
+      setExecuteTx(result);
+    } else {
+      const result = await ops.execute(target, 0n, data, pred, s);
+      setExecuteTx(result);
+    }
   }
 
   async function handleDeriveFromTx(): Promise<void> {
@@ -258,7 +307,11 @@ export function Timelock(): JSX.Element {
   async function handleCancel(): Promise<void> {
     if (!timelockAddr || !lookupHash) return;
     setCancelTx({ status: 'pending' });
-    setCancelTx(await ops.cancel(timelockAddr, lookupHash));
+    if (chainType === 'starknet') {
+      setCancelTx(await cairoOps.cancel(timelockAddr, lookupHash));
+    } else {
+      setCancelTx(await ops.cancel(timelockAddr, lookupHash));
+    }
   }
 
   async function handleScan(): Promise<void> {
@@ -270,8 +323,20 @@ export function Timelock(): JSX.Element {
       const executedTopic  = iface.getEvent('CallExecuted')!.topicHash;
       const cancelledTopic = iface.getEvent('Cancelled')!.topicHash;
       const saltTopic      = iface.getEvent('CallSalt')!.topicHash;
-      const fromBlock = scanFromBlock.trim() || '0';
-      const base = `https://api.etherscan.io/v2/api?chainid=${selectedChain.id}&module=logs&action=getLogs&address=${timelockAddr}&fromBlock=${fromBlock}&toBlock=latest&apikey=${ARBISCAN_API_KEY}`;
+      // Use user API key from Settings, fall back to env var
+      const userKey = (() => { try { return localStorage.getItem('ozlz_explorer_api_key') ?? ''; } catch { return ''; } })();
+      const apiKey = userKey || ARBISCAN_API_KEY;
+      // Auto-detect starting block if not specified
+      let fromBlock = scanFromBlock.trim();
+      if (!fromBlock) {
+        try {
+          const { JsonRpcProvider } = await import('ethers');
+          const p = new JsonRpcProvider(selectedChain.rpc, undefined, { staticNetwork: true });
+          const latest = await p.getBlockNumber();
+          fromBlock = String(Math.max(0, latest - 100000));
+        } catch { fromBlock = '0'; }
+      }
+      const base = `https://api.etherscan.io/v2/api?chainid=${selectedChain.id}&module=logs&action=getLogs&address=${timelockAddr}&fromBlock=${fromBlock}&toBlock=latest&apikey=${apiKey}`;
       type ArbLog = { topics: string[]; data: string; transactionHash: string };
       async function fetchLogs(topic0: string): Promise<ArbLog[]> {
         const res = await fetch(`${base}&topic0=${topic0}`);
@@ -319,7 +384,7 @@ export function Timelock(): JSX.Element {
         else state = 'Waiting';
         return { ...op, state, eta: state === 'Waiting' ? formatCountdown(tsNum) : null };
       }));
-      setScannedOps(results.filter((r) => r.state === 'Waiting' || r.state === 'Ready'));
+      setScannedOps(results);
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -328,6 +393,7 @@ export function Timelock(): JSX.Element {
   }
 
   const explorerTx = (hash: string) => `https://${selectedChain.explorer}/tx/${hash}`;
+  const wrongChain = evm.isConnected && evm.chainId !== activeChainId;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -337,28 +403,44 @@ export function Timelock(): JSX.Element {
       <div className="col-span-12 lg:col-span-8 space-y-6">
 
         <Section icon="schedule" title="TimelockController" subtitle="Contract address and configuration">
-          {/* Network indicator */}
-          <div className="flex items-center gap-3 mb-4">
-            {evm.isConnected && walletChain && !manualChainId && (
-              <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
+          {/* Chain type toggle */}
+          <div className="flex gap-2 items-center mb-4 flex-wrap">
+            <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
+              onClick={() => { setChainType('evm'); setMinDelay(''); }}>EVM</button>
+            <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
+              onClick={() => { setChainType('starknet'); setMinDelay(''); }}>Starknet</button>
+
+            {/* Chain selector */}
+            {chainType === 'evm' ? (
+              <div className="ml-auto flex items-center gap-2">
+                {evm.isConnected && walletChain && !manualChainId && (
+                  <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
+                )}
+                <select className="input text-xs w-44" value={activeChainId}
+                  onChange={(e) => setAndPersistChain(Number(e.target.value))}>
+                  {TIMELOCK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {manualChainId && (
+                  <button className="btn btn-sm" onClick={() => setAndPersistChain(null)}>Auto</button>
+                )}
+              </div>
+            ) : (
+              <div className="ml-auto flex items-center gap-2">
+                {stark.isConnected && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet</span>}
+                <select className="input text-xs w-44" value={starkChainId}
+                  onChange={(e) => setStarkChainId(e.target.value)}>
+                  {STARK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
             )}
-            <div className="ml-auto flex items-center gap-2">
-              <select className="input text-xs w-44" value={activeChainId}
-                onChange={(e) => setManualChainId(Number(e.target.value))}>
-                {TIMELOCK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              {manualChainId && (
-                <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
-              )}
-            </div>
           </div>
 
-          {/* Wrong chain warning */}
-          {evm.isConnected && evm.chainId !== activeChainId && (
+          {/* Wrong chain warning (EVM only) */}
+          {chainType === 'evm' && evm.isConnected && evm.chainId !== activeChainId && (
             <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
               <span>Wallet is on {TIMELOCK_CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, selected is {selectedChain.name}.</span>
               <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet</button>
-              <button className="btn btn-sm" onClick={() => setManualChainId(evm.chainId ?? null)}>Use wallet chain</button>
+              <button className="btn btn-sm" onClick={() => setAndPersistChain(evm.chainId ?? null)}>Use wallet chain</button>
             </div>
           )}
 
@@ -481,9 +563,14 @@ export function Timelock(): JSX.Element {
           </div>
 
           <div className="mt-4">
-            <button className="btn btn-primary" onClick={handleSchedule} disabled={!evm.isConnected || !calldata}>
-              Schedule
-            </button>
+            {chainType === 'evm' && wrongChain ? (
+              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet to {selectedChain.name}</button>
+            ) : (
+              <button className="btn btn-primary" onClick={handleSchedule}
+                disabled={chainType === 'starknet' ? !stark.isConnected || !calldata : !evm.isConnected || !calldata}>
+                Schedule{chainType === 'starknet' ? ' (Starknet)' : ''}
+              </button>
+            )}
           </div>
           <div className="mt-3"><TxStatus state={scheduleTx} /></div>
         </Section>
@@ -524,16 +611,19 @@ export function Timelock(): JSX.Element {
                   <StateBadge state={opState} />
                   {opEta && <span className="text-xs text-on-surface-variant">{opEta}</span>}
                 </div>
-                {opState === 'Ready' && (
+                {opState === 'Ready' && !wrongChain && (
                   <div className="flex flex-col gap-1">
                     <button className="btn btn-primary" onClick={handleExecute}
-                      disabled={!evm.isConnected || !derivedCalldata}>Execute</button>
-                    {evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
+                      disabled={chainType === 'starknet' ? !stark.isConnected || !derivedCalldata : !evm.isConnected || !derivedCalldata}>Execute</button>
+                    {(chainType === 'evm' ? evm.isConnected : stark.isConnected) && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
                   </div>
                 )}
-                {(opState === 'Waiting' || opState === 'Ready') && (
+                {(opState === 'Waiting' || opState === 'Ready') && !wrongChain && (
                   <button className="btn btn-danger"
-                    onClick={handleCancel} disabled={!evm.isConnected}>Cancel</button>
+                    onClick={handleCancel} disabled={chainType === 'starknet' ? !stark.isConnected : !evm.isConnected}>Cancel</button>
+                )}
+                {(opState === 'Ready' || opState === 'Waiting') && wrongChain && chainType === 'evm' && (
+                  <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet to {selectedChain.name}</button>
                 )}
                 {opState === 'Done' && <span className="text-xs text-on-surface-variant">Already executed — nothing to do</span>}
               </div>
@@ -574,17 +664,24 @@ export function Timelock(): JSX.Element {
 
       {/* ── Right: active operations sidebar ── */}
       <div className="col-span-12 lg:col-span-4">
-        <Section icon="list_alt" title="Active Operations" subtitle="Pending &amp; ready ops"
-          actions={
+        <Section icon="list_alt" title="Operations" subtitle={chainType === 'starknet' ? 'Event scan not available on Starknet' : scannedOps.length > 0 ? `${scannedOps.length} found` : 'Scan to discover'}
+          actions={chainType === 'evm' ? (
             <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !timelockAddr}>
               {scanning ? '…' : 'Scan'}
             </button>
-          }>
+          ) : null}>
+          {chainType === 'starknet' && (
+            <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">
+              Event scanning is not available for Starknet — use the Lookup section to check operation state by hash.
+            </div>
+          )}
+          {chainType === 'evm' && (
           <div className="mb-4">
             <div className="label">From block</div>
-            <input className="input" placeholder="Leave empty for auto"
+            <input className="input" placeholder="Auto (~100k blocks back)"
               value={scanFromBlock} onChange={(e) => setScanFromBlock(e.target.value)} />
           </div>
+          )}
 
           {scanError && <div className="text-[11px] text-error mb-3">{scanError}</div>}
           {!scanning && scannedOps.length === 0 && !scanError && (
@@ -592,8 +689,33 @@ export function Timelock(): JSX.Element {
           )}
           {scanning && <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Scanning…</div>}
 
+          {/* Filter tabs */}
+          {scannedOps.length > 0 && (
+            <div className="flex gap-1 mb-3 flex-wrap">
+              {(['all', 'Waiting', 'Ready', 'Done'] as const).map((f) => {
+                const count = f === 'all' ? scannedOps.length : scannedOps.filter((o) => o.state === f).length;
+                return (
+                  <button key={f} className={`tab-btn text-[10px] ${opFilter === f ? 'tab-btn-active' : ''}`}
+                    onClick={() => setOpFilter(f)}>
+                    {f === 'all' ? 'All' : f} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="space-y-2">
-            {scannedOps.map((op) => {
+            {scannedOps
+              .filter((op) => opFilter === 'all' || op.state === opFilter)
+              .sort((a, b) => {
+                // Waiting first, then Ready, then Done; within Waiting sort by ETA (soonest first)
+                const order: Record<string, number> = { Waiting: 0, Ready: 1, Done: 2, Unset: 3 };
+                const diff = (order[a.state] ?? 9) - (order[b.state] ?? 9);
+                if (diff !== 0) return diff;
+                if (a.eta && b.eta) return a.eta.localeCompare(b.eta);
+                return 0;
+              })
+              .map((op) => {
               const decoded = decodeCalldata(op.data);
               return (
                 <div key={op.id} className="bg-surface-container rounded-lg border border-outline-variant/10 overflow-hidden">
@@ -666,10 +788,13 @@ const ROLE_COLORS: Record<RoleName, string> = {
   ADMIN: 'bg-tertiary/10 text-tertiary border-tertiary/20',
 };
 
-function RoleManagement({ timelockAddr, ops, evm }: {
+function RoleManagement({ timelockAddr, ops, evm, wrongChain, chainName, switchNetwork }: {
   timelockAddr: string;
   ops: ReturnType<typeof useTimelockOps>;
   evm: { isConnected: boolean; address: string | null; provider: import('ethers').BrowserProvider | null; connect: () => Promise<void> };
+  wrongChain: boolean;
+  chainName: string;
+  switchNetwork: () => void;
 }): JSX.Element {
   const [walletRoles, setWalletRoles] = useState<Record<RoleName, boolean> | null>(null);
   const [roleHashes, setRoleHashes] = useState<Record<string, string> | null>(null);
@@ -762,11 +887,15 @@ function RoleManagement({ timelockAddr, ops, evm }: {
                   <input className="input" placeholder="Account address (0x…)" value={grantAddr}
                     onChange={(e) => setGrantAddr(e.target.value)} spellCheck={false} />
                 </div>
-                <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
-                  disabled={!grantAddr || grantTx.status === 'pending'}
-                  onClick={handleGrantOrRevoke}>
-                  {revokeMode ? 'Revoke' : 'Grant'}
-                </button>
+                {wrongChain ? (
+                  <button className="btn btn-sm" onClick={switchNetwork}>Switch to {chainName}</button>
+                ) : (
+                  <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
+                    disabled={!grantAddr || grantTx.status === 'pending'}
+                    onClick={handleGrantOrRevoke}>
+                    {revokeMode ? 'Revoke' : 'Grant'}
+                  </button>
+                )}
                 <button className="btn btn-sm" onClick={() => setRevokeMode((v) => !v)}>
                   {revokeMode ? 'Switch to Grant' : 'Switch to Revoke'}
                 </button>

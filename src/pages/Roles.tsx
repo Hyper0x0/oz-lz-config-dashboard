@@ -9,7 +9,7 @@ import { ChainBadge } from '@/components/ChainBadge';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
-import { decodeContractError } from '@/utils/decodeError';
+import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import type { TxState } from '@/types';
 
 // ── Known role presets ──────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ const EVM_CHAINS = [
 ];
 
 const STARK_CHAINS = [
-  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'starkscan.co' },
-  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.starkscan.co' },
+  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
+  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
 ];
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -369,7 +369,8 @@ export function Roles(): JSX.Element {
         setGrantTx({ status: 'success', hash: response.transaction_hash });
         void handleStarkCheck();
       } catch (e) {
-        setGrantTx({ status: 'error', message: decodeContractError(e) });
+        const fn = revokeMode ? 'revoke_role' : 'grant_role';
+        setGrantTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr, functionName: fn, functionCall: `${fn}(${grantRoleHash}, ${grantAddr})` }) });
       }
       return;
     }
@@ -387,7 +388,8 @@ export function Roles(): JSX.Element {
       void handleEvmCheck();
       void handleScan();
     } catch (e) {
-      setGrantTx({ status: 'error', message: decodeContractError(e) });
+      const fn = revokeMode ? 'revokeRole' : 'grantRole';
+      setGrantTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr, functionName: fn, functionCall: `${fn}(${grantRoleHash}, ${grantAddr})` }) });
     }
   }
 
@@ -398,8 +400,8 @@ export function Roles(): JSX.Element {
       if (!stark.account || !stark.address) return;
       if (!confirm('Are you sure you want to renounce this role? This cannot be undone without an admin granting it back.')) return;
       setRenounceTx({ status: 'pending' });
+      const cairoRH = role.cairoHash ?? snKeccak(role.label);
       try {
-        const cairoRH = role.cairoHash ?? snKeccak(role.label);
         const response = await stark.account.execute([{
           contractAddress: contractAddr,
           entrypoint: 'renounce_role',
@@ -409,7 +411,7 @@ export function Roles(): JSX.Element {
         setRenounceTx({ status: 'success', hash: response.transaction_hash });
         void handleStarkCheck();
       } catch (e) {
-        setRenounceTx({ status: 'error', message: decodeContractError(e) });
+        setRenounceTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr, functionName: 'renounce_role', functionCall: `renounce_role(${cairoRH}, ${stark.address})` }) });
       }
       return;
     }
@@ -425,7 +427,7 @@ export function Roles(): JSX.Element {
       setRenounceTx({ status: 'success', hash: tx.hash });
       void handleEvmCheck();
     } catch (e) {
-      setRenounceTx({ status: 'error', message: decodeContractError(e) });
+      setRenounceTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr, functionName: 'renounceRole', functionCall: `renounceRole(${role.hash}, ${evm.address})` }) });
     }
   }
 
@@ -518,38 +520,35 @@ export function Roles(): JSX.Element {
     <>
       {/* Contract setup */}
       <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract">
-        {/* Chain type toggle */}
-        <div className="flex items-center gap-2 mb-4">
-          <button className={`btn btn-sm ${chainType === 'evm' ? 'btn-primary' : ''}`} onClick={() => setChainType('evm')}>EVM</button>
-          <button className={`btn btn-sm ${chainType === 'starknet' ? 'btn-primary' : ''}`} onClick={() => setChainType('starknet')}>Starknet</button>
-        </div>
+        {/* Chain type toggle + chain selector */}
+        <div className="flex gap-2 items-center mb-4 flex-wrap">
+          <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
+            onClick={() => setChainType('evm')}>EVM</button>
+          <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
+            onClick={() => setChainType('starknet')}>Starknet</button>
 
-        {/* Network indicator */}
-        <div className="flex items-center gap-3 mb-4">
-          {chainType === 'evm' && evm.isConnected && walletChain && !manualChainId && (
-            <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
-          )}
-          {chainType === 'starknet' && stark.address && (
-            <span className="text-xs text-secondary">✓ Starknet connected: {stark.address.slice(0, 8)}…{stark.address.slice(-4)}</span>
-          )}
-          <div className="ml-auto flex items-center gap-2">
-            {chainType === 'evm' ? (
-              <>
-                <select className="input text-xs w-44" value={activeChainId}
-                  onChange={(e) => setManualChainId(Number(e.target.value))}>
-                  {EVM_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                {manualChainId && (
-                  <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
-                )}
-              </>
-            ) : (
+          {chainType === 'evm' ? (
+            <div className="ml-auto flex items-center gap-2">
+              {evm.isConnected && walletChain && !manualChainId && (
+                <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
+              )}
+              <select className="input text-xs w-44" value={activeChainId}
+                onChange={(e) => setManualChainId(Number(e.target.value))}>
+                {EVM_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {manualChainId && (
+                <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
+              )}
+            </div>
+          ) : (
+            <div className="ml-auto flex items-center gap-2">
+              {stark.address && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet</span>}
               <select className="input text-xs w-44" value={starkChainId}
                 onChange={(e) => setStarkChainId(e.target.value)}>
                 {STARK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Wrong chain warning (EVM only) */}
@@ -594,9 +593,12 @@ export function Roles(): JSX.Element {
                 <div key={role.hash} className={`flex items-center gap-3 p-3 rounded-lg border text-xs ${has ? 'bg-secondary/10 text-secondary border-secondary/20' : 'bg-surface-container border-outline-variant/10 text-on-surface-variant/40'}`}>
                   <span className="font-bold">{has ? '✓' : '✗'}</span>
                   <span className="font-mono text-[11px] flex-1">{role.label}</span>
-                  {has && (
+                  {has && !wrongChain && (
                     <button className="btn btn-sm btn-danger" onClick={() => handleRenounce(role)}
                       disabled={renounceTx.status === 'pending'}>Renounce</button>
+                  )}
+                  {has && wrongChain && (
+                    <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch to {evmChain.name}</button>
                   )}
                 </div>
               );
@@ -623,11 +625,15 @@ export function Roles(): JSX.Element {
               <div className="label">Account</div>
               <input className="input" value={grantAddr} onChange={(e) => setGrantAddr(e.target.value)} placeholder="0x…" spellCheck={false} />
             </div>
-            <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
-              disabled={!grantRoleHash || !grantAddr || grantTx.status === 'pending'}
-              onClick={handleGrantRevoke}>
-              {revokeMode ? 'Revoke' : 'Grant'}
-            </button>
+            {wrongChain ? (
+              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch to {evmChain.name}</button>
+            ) : (
+              <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
+                disabled={!grantRoleHash || !grantAddr || grantTx.status === 'pending'}
+                onClick={handleGrantRevoke}>
+                {revokeMode ? 'Revoke' : 'Grant'}
+              </button>
+            )}
           </div>
           <TxStatus state={grantTx} />
         </Section>

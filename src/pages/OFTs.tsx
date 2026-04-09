@@ -11,7 +11,7 @@ import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
 import type { TxState } from '@/types';
-import { decodeContractError } from '@/utils/decodeError';
+import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 
 type WiringMode = 'bridge-oft' | 'oft-oft';
 
@@ -47,11 +47,15 @@ export function OFTs(): JSX.Element {
 
   const [mode, setMode] = useState<WiringMode>('bridge-oft');
   const [detectedHome, setDetectedHome] = useState<'adapter' | 'oft' | null>(null);
+  const [detectedRemote, setDetectedRemote] = useState<'adapter' | 'oft' | null>(null);
   const [detecting, setDetecting] = useState(false);
 
   const [homeAddr, setHomeAddr] = useState(CONTRACTS.adapter);
   const [remoteAddr, setRemoteAddr] = useState(CONTRACTS.peer);
   const [evmUnderlyingToken, setEvmUnderlyingToken] = useState<string | null>(null);
+  const [decimals, setDecimals] = useState(18);
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
+  const [tokenSymbol, setTokenSymbol] = useState<string | null>(null);
 
   const hasStarknet = isStarknet(home) || isStarknet(remote);
   const evmHome: LZChain | null = isEvm(home) ? home : null;
@@ -59,17 +63,24 @@ export function OFTs(): JSX.Element {
 
   // Auto-detect Adapter vs OFT
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const evmRemote: LZChain | null = isEvm(remote) ? remote : null;
+
   useEffect(() => {
     setDetectedHome(null);
-    if (!isAddr(homeAddr)) return;
+    setDetectedRemote(null);
+    const homeValid = isAddr(homeAddr);
+    const remoteValid = isAddr(remoteAddr);
+    if (!homeValid && !remoteValid) return;
     clearTimeout(detectTimer.current);
     setDetecting(true);
     detectTimer.current = setTimeout(async () => {
       try {
-        if (evmHome) {
-          const t = await wiring.detectOFTType(homeAddr, evmHome.rpc).catch(() => null);
+        // Detect home
+        if (evmHome && homeValid) {
+          const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
+          const t = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp).catch(() => null);
           if (t) { setDetectedHome(t); setMode(t === 'adapter' ? 'bridge-oft' : 'oft-oft'); }
-        } else if (starkHome) {
+        } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
           if (r) {
             setDetectedHome(r.type);
@@ -77,14 +88,70 @@ export function OFTs(): JSX.Element {
             if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr);
           }
         }
-      } catch { setDetectedHome(null); }
+        // Detect remote
+        if (evmRemote && remoteValid) {
+          const rwp = evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
+          const t = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp).catch(() => null);
+          if (t) setDetectedRemote(t);
+        } else if (isStarknet(remote) && remoteValid) {
+          const starkR = remote as StarknetChain;
+          const r = await cairo.detectCairoOFTType(remoteAddr, starkR.rpc).catch(() => null);
+          if (r) setDetectedRemote(r.type);
+        }
+      } catch { setDetectedHome(null); setDetectedRemote(null); }
       finally { setDetecting(false); }
     }, 800);
     return () => clearTimeout(detectTimer.current);
-  }, [homeAddr, evmHome?.rpc, home.eid]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [homeAddr, remoteAddr, evmHome?.rpc, evmRemote?.rpc, home.eid, remote.eid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read decimals + balance + symbol after type detection
+  useEffect(() => {
+    setDecimals(18);
+    setWalletBalance(null);
+    setTokenSymbol(null);
+    if (!isAddr(homeAddr) || detecting) return;
+    (async () => {
+      try {
+        if (evmHome) {
+          const { Contract: C, JsonRpcProvider: P } = await import('ethers');
+          const p = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : new P(evmHome.rpc);
+          // For adapters, read from underlying token; for OFTs, from the OFT itself
+          let tokenAddr = homeAddr;
+          if (detectedHome === 'adapter') {
+            const c = new C(homeAddr, (await import('@/abis/evm/OFTAdapter.json')).default, p);
+            tokenAddr = await c.token() as string;
+            setEvmUnderlyingToken(tokenAddr);
+          }
+          const erc20 = new C(tokenAddr, ['function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)', 'function symbol() view returns (string)'], p);
+          const [dec, sym] = await Promise.all([erc20.decimals(), erc20.symbol().catch(() => null)]);
+          const decNum = Number(dec);
+          setDecimals(decNum);
+          setTokenSymbol(sym as string | null);
+          if (evm.address) {
+            const bal = await erc20.balanceOf(evm.address) as bigint;
+            const whole = bal / BigInt(10 ** decNum);
+            const frac = (bal % BigInt(10 ** decNum)).toString().padStart(decNum, '0').slice(0, 4);
+            setWalletBalance(`${whole}.${frac}`);
+          }
+        } else if (starkHome) {
+          if (stark.address) {
+            const bal = await cairo.cairoBalance(homeAddr, stark.address, starkHome.rpc);
+            const whole = bal / BigInt(10 ** 18);
+            const frac = (bal % BigInt(10 ** 18)).toString().padStart(18, '0').slice(0, 4);
+            setWalletBalance(`${whole}.${frac}`);
+          }
+          // Try to read token symbol from Cairo
+          try {
+            const info = await cairo.readCairoTokenInfo(homeAddr, starkHome.rpc);
+            if (info.symbol) setTokenSymbol(info.symbol);
+          } catch { /* */ }
+        }
+      } catch { /* best-effort */ }
+    })();
+  }, [homeAddr, detectedHome, detecting, evm.address, stark.address, evmHome?.rpc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const homeLabel = detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : (mode === 'bridge-oft' ? 'Adapter' : 'OFT');
-  const remoteLabel = 'OFT';
+  const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
 
   function handleNetworkToggle(testnet: boolean) {
     setIsTestnet(testnet);
@@ -105,12 +172,21 @@ export function OFTs(): JSX.Element {
           {chainsLoading && <span className="text-xs text-on-surface-variant">Loading chains…</span>}
           <div className="ml-auto flex gap-2 items-center">
             {detecting && <span className="text-[11px] text-on-surface-variant animate-pulse">Detecting type…</span>}
-            {!detecting && detectedHome && (
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
-                {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
-              </span>
+            {!detecting && (detectedHome || detectedRemote) && (
+              <div className="flex gap-1.5 items-center">
+                {detectedHome && (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                    Source: {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
+                  </span>
+                )}
+                {detectedRemote && (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedRemote === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                    Dest: {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
+                  </span>
+                )}
+              </div>
             )}
-            {!detecting && !detectedHome && (
+            {!detecting && !detectedHome && !detectedRemote && (
               <>
                 <span className="text-xs text-on-surface-variant">Type:</span>
                 <button
@@ -127,7 +203,7 @@ export function OFTs(): JSX.Element {
         {/* Chain selectors + addresses — compact 2-row grid */}
         <div className="flex gap-3 items-end">
           <div className="flex-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} (source) — EID {home.eid}</div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} (src) — EID {home.eid}</div>
             <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
               disabledEid={remote.eid}
               onSelect={(c) => { setHomeChain(c); }} />
@@ -141,7 +217,7 @@ export function OFTs(): JSX.Element {
               setRemoteAddr(tmp);
             }}>⇄</button>
           <div className="flex-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} (destination) — EID {remote.eid}</div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} (dest) — EID {remote.eid}</div>
             <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
               disabledEid={home.eid}
               onSelect={(c) => { setRemoteChain(c); }} />
@@ -156,6 +232,24 @@ export function OFTs(): JSX.Element {
             <input className="input" value={remoteAddr} onChange={(e) => setRemoteAddr(e.target.value)} spellCheck={false} placeholder={`${remoteLabel} address`} />
           </div>
         </div>
+
+        {/* Wallet hints + switch chain */}
+        <div className="flex items-center gap-3 mt-3 flex-wrap">
+          {evmHome && evm.isConnected && evm.chainId === evmHome.chainId && (
+            <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmHome.name}</span>
+          )}
+          {evmHome && evm.isConnected && evm.chainId !== evmHome.chainId && (
+            <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmHome.chainId)}>
+              Switch wallet to {evmHome.name}
+            </button>
+          )}
+          {evmRemote && evm.isConnected && evm.chainId === evmRemote.chainId && !evmHome && (
+            <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmRemote.name}</span>
+          )}
+          {hasStarknet && stark.isConnected && (
+            <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet connected</span>
+          )}
+        </div>
       </section>
 
       {/* Send Panel */}
@@ -166,6 +260,9 @@ export function OFTs(): JSX.Element {
         wiring={wiring} cairo={cairo}
         isTestnet={isTestnet}
         evmUnderlyingToken={evmUnderlyingToken}
+        decimals={decimals}
+        walletBalance={walletBalance}
+        tokenSymbol={tokenSymbol}
       />
     </div>
   );
@@ -173,7 +270,7 @@ export function OFTs(): JSX.Element {
 
 // ── Send Panel ───────────────────────────────────────────────────────────────
 
-function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet, evmUnderlyingToken }: {
+function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet, evmUnderlyingToken, decimals, walletBalance, tokenSymbol }: {
   home: AnyChain; remote: AnyChain;
   homeAddr: string; remoteAddr: string;
   mode: WiringMode;
@@ -183,6 +280,9 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
   cairo: ReturnType<typeof useCairoOFT>;
   isTestnet: boolean;
   evmUnderlyingToken?: string | null;
+  decimals: number;
+  walletBalance: string | null;
+  tokenSymbol: string | null;
 }): JSX.Element {
   const isAdapter = mode === 'bridge-oft';
   const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
@@ -198,7 +298,7 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
 
   const [quoting, setQuoting] = useState(false);
   const [quotedFee, setQuotedFee] = useState<{ nativeFee: bigint; lzTokenFee: bigint } | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteTx, setQuoteTx] = useState<TxState>({ status: 'idle' });
   const [approveTx, setApproveTx] = useState<TxState>({ status: 'idle' });
   const [sendTx, setSendTx] = useState<TxState>({ status: 'idle' });
 
@@ -225,9 +325,9 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
   }
 
   async function handleQuote(): Promise<void> {
-    setQuoteError(null); setQuotedFee(null); setQuoting(true);
+    setQuoteTx({ status: 'idle' }); setQuotedFee(null); setQuoting(true);
     try {
-      const amountLD = parseAmount(18);
+      const amountLD = parseAmount(decimals);
       const slip = Number(slippage) || 5;
       const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
       const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
@@ -240,7 +340,9 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
         setQuotedFee(fee);
       }
     } catch (e) {
-      setQuoteError(decodeContractError(e));
+      const fn = srcIsStark ? 'cairoQuoteSend' : 'quoteSend';
+      const call = `${fn}(${srcAddr}, dstEid: ${dstChain.eid}, amount: ${parseAmount(decimals)})`;
+      setQuoteTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: srcAddr, functionName: fn, functionCall: call }) });
     } finally { setQuoting(false); }
   }
 
@@ -251,17 +353,17 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
         const provider = evm.signer!;
         const c = new (await import('ethers')).Contract(srcAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
         const tokenAddr = await c.token() as string;
-        const amountLD = parseAmount(18);
+        const amountLD = parseAmount(decimals);
         setApproveTx(await wiring.approveToken(tokenAddr, srcAddr, amountLD));
       } catch (e) {
-        setApproveTx({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+        setApproveTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: srcAddr, functionName: 'approve', functionCall: `approve(${srcAddr}, ${parseAmount(decimals)})` }) });
       }
     }
   }
 
   async function handleSend(): Promise<void> {
     if (!quotedFee) return;
-    const amountLD = parseAmount(18);
+    const amountLD = parseAmount(decimals);
     const slip = Number(slippage) || 5;
     const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
     const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
@@ -275,7 +377,11 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
         setSendTx(await wiring.evmSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD, quotedFee));
       }
     } catch (e) {
-      setSendTx({ status: 'error', message: decodeContractError(e) });
+      const fn = srcIsStark ? 'send (Cairo OFT)' : 'send (EVM OFT)';
+      const call = srcIsStark
+        ? `cairoSend(${srcAddr}, dstEid: ${dstChain.eid}, to: ${recipientAddr}, amount: ${amountLD}, min: ${minAmountLD})`
+        : `evmSend(${srcAddr}, dstEid: ${dstChain.eid}, to: ${toBytes32(recipientAddr)}, amount: ${amountLD}, min: ${minAmountLD})`;
+      setSendTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: srcAddr, functionName: fn, functionCall: call }) });
     }
   }
 
@@ -303,7 +409,16 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
       {/* Amount + recipient */}
       <div className="form-grid mb-3">
         <div>
-          <div className="label">Amount</div>
+          <div className="flex items-center gap-2">
+            <div className="label mb-0">Amount{tokenSymbol ? ` (${tokenSymbol})` : ''}</div>
+            {walletBalance && (
+              <button className="text-[10px] text-primary hover:underline cursor-pointer bg-transparent border-none p-0"
+                onClick={() => setAmount(walletBalance)}>
+                Balance: {walletBalance}{tokenSymbol ? ` ${tokenSymbol}` : ''}
+              </button>
+            )}
+            {decimals !== 18 && <span className="text-[10px] text-on-surface-variant">({decimals} dec)</span>}
+          </div>
           <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" />
         </div>
         <div>
@@ -356,7 +471,7 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
       </div>
 
       {/* Status */}
-      {quoteError && <div className="text-xs text-error mt-2">{quoteError}</div>}
+      {quoteTx.status === 'error' && <div className="mt-2"><TxStatus state={quoteTx} /></div>}
       {quotedFee && (
         <div className="bg-surface-container rounded-lg p-3 mt-3 border border-outline-variant/10">
           <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Quoted fee</div>

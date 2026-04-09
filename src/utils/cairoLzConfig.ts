@@ -98,7 +98,11 @@ export interface DecodedStarknetExecutor {
  */
 export function decodeStarknetUln(felts: string[]): DecodedStarknetUln | null {
   try {
+    // The RPC returns Span<felt252> with a length prefix — skip it
     let i = 0;
+    const firstVal = Number(BigInt(felts[0]));
+    // Heuristic: if first felt is a small number matching remaining array length, it's a span prefix
+    if (firstVal > 0 && firstVal === felts.length - 1) i = 1;
     const confirmations = BigInt(felts[i++]);
     i++; // has_confirmations
     const reqLen = Number(BigInt(felts[i++]));
@@ -129,9 +133,13 @@ export function decodeStarknetUln(felts: string[]): DecodedStarknetUln | null {
  */
 export function decodeStarknetExecutor(felts: string[]): DecodedStarknetExecutor | null {
   try {
+    // The RPC returns Span<felt252> with a length prefix — skip it
+    let offset = 0;
+    const firstVal = Number(BigInt(felts[0]));
+    if (firstVal > 0 && firstVal === felts.length - 1) offset = 1;
     return {
-      maxMessageSize: Number(BigInt(felts[0])),
-      executor: felts[1],
+      maxMessageSize: Number(BigInt(felts[offset])),
+      executor: felts[offset + 1],
     };
   } catch {
     return null;

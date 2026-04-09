@@ -8,8 +8,8 @@ import { NetworkHint } from './StepDelegate';
 export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
   const homeDefaults = home.evmChain?.defaults ?? home.starkChain?.defaults;
   const remoteDefaults = remote.evmChain?.defaults ?? remote.starkChain?.defaults;
-  const defaultGas = String(Math.max(homeDefaults?.gasLimit ?? 80000, remoteDefaults?.gasLimit ?? 80000));
-  const [gas, setGas] = useState(defaultGas);
+  const [homeGas, setHomeGas] = useState(String(homeDefaults?.gasLimit ?? 80000));
+  const [remoteGas, setRemoteGas] = useState(String(remoteDefaults?.gasLimit ?? 80000));
   const [homeTx, setHomeTx] = useState<TxState>({ status: 'idle' });
   const [remoteTx, setRemoteTx] = useState<TxState>({ status: 'idle' });
 
@@ -17,9 +17,9 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
     setHomeTx({ status: 'pending' });
     let result: TxState;
     if (home.kind === 'starknet') {
-      result = await hooks.cairoEndpoint.setEnforcedOptions(home.contractAddr, remote.chain.eid, BigInt(gas), home.starkChain!.rpc);
+      result = await hooks.cairoEndpoint.setEnforcedOptions(home.contractAddr, remote.chain.eid, BigInt(homeGas), home.starkChain!.rpc);
     } else {
-      result = await hooks.wiring.setEvmEnforcedOptions(home.contractAddr, remote.chain.eid, BigInt(gas));
+      result = await hooks.wiring.setEvmEnforcedOptions(home.contractAddr, remote.chain.eid, BigInt(homeGas));
     }
     setHomeTx(result);
     if (result.status === 'success') onTxSuccess('home');
@@ -29,9 +29,9 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
     setRemoteTx({ status: 'pending' });
     let result: TxState;
     if (remote.kind === 'starknet') {
-      result = await hooks.cairoEndpoint.setEnforcedOptions(remote.contractAddr, home.chain.eid, BigInt(gas), remote.starkChain!.rpc);
+      result = await hooks.cairoEndpoint.setEnforcedOptions(remote.contractAddr, home.chain.eid, BigInt(remoteGas), remote.starkChain!.rpc);
     } else {
-      result = await hooks.wiring.setEvmEnforcedOptions(remote.contractAddr, home.chain.eid, BigInt(gas));
+      result = await hooks.wiring.setEvmEnforcedOptions(remote.contractAddr, home.chain.eid, BigInt(remoteGas));
     }
     setRemoteTx(result);
     if (result.status === 'success') onTxSuccess('remote');
@@ -43,18 +43,18 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
         Enforced options set the minimum gas for lzReceive. Must be configured on both sides before opening peers.
       </p>
 
-      <div className="mb-3">
-        <div className="label">Gas limit for lzReceive</div>
-        <input className="input" style={{ maxWidth: 200 }} value={gas} onChange={(e) => setGas(e.target.value)} placeholder={defaultGas} />
-        <div className="text-[11px] text-[var(--text-muted)] mt-1">
-          Recommended: {homeDefaults?.gasLimit ?? '—'} ({home.chainLabel}) / {remoteDefaults?.gasLimit ?? '—'} ({remote.chainLabel})
-        </div>
-      </div>
-
-      <div className="step-actions">
-        {/* Home side */}
+      <div className="step-actions" style={{ alignItems: 'start' }}>
+        {/* Home chain */}
         <div>
-          <div className="label mb-1">Home — {home.chainLabel}</div>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary mb-3">
+            {home.chainLabel}
+          </div>
+          <div className="label">Gas limit for lzReceive</div>
+          <input className="input mb-1" style={{ maxWidth: 200 }} value={homeGas} onChange={(e) => setHomeGas(e.target.value)}
+            placeholder={String(homeDefaults?.gasLimit ?? 80000)} />
+          <div className="text-[11px] text-[var(--text-muted)] mb-2">
+            Recommended: {homeDefaults?.gasLimit ?? '—'}
+          </div>
           {verifyResult?.homeEnforcedOptions && verifyResult.homeEnforcedOptions !== '0x' && (
             <div className="text-xs text-[var(--text-muted)] mb-2">
               Current: <span className="font-mono text-[11px]">set ✓</span>
@@ -66,9 +66,17 @@ export function StepOptions({ home, remote, hooks, verifyResult, onTxSuccess }: 
           <div className="mt-1.5"><TxStatus state={homeTx} explorerUrl={explorerTxUrl(home)} /></div>
         </div>
 
-        {/* Remote side */}
+        {/* Remote chain */}
         <div>
-          <div className="label mb-1">Remote — {remote.chainLabel}</div>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary mb-3">
+            {remote.chainLabel}
+          </div>
+          <div className="label">Gas limit for lzReceive</div>
+          <input className="input mb-1" style={{ maxWidth: 200 }} value={remoteGas} onChange={(e) => setRemoteGas(e.target.value)}
+            placeholder={String(remoteDefaults?.gasLimit ?? 80000)} />
+          <div className="text-[11px] text-[var(--text-muted)] mb-2">
+            Recommended: {remoteDefaults?.gasLimit ?? '—'}
+          </div>
           {verifyResult?.remoteEnforcedOptions && verifyResult.remoteEnforcedOptions !== '0x' && (
             <div className="text-xs text-[var(--text-muted)] mb-2">
               Current: <span className="font-mono text-[11px]">set ✓</span>

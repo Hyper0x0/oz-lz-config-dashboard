@@ -145,8 +145,8 @@ function deriveStatuses(
       remote: 'configured',
     },
     peers: {
-      home: homeCheck('peers', checkLabel('Peer set (home → remote)'), homeCairo.peer),
-      remote: remoteCheck('peers', checkLabel('Peer set (remote → home)'), remoteCairo.peer),
+      home: homeCheck('peers', checkLabel('Peer set (source → destination)'), homeCairo.peer),
+      remote: remoteCheck('peers', checkLabel('Peer set (destination → source)'), remoteCairo.peer),
     },
   };
 }

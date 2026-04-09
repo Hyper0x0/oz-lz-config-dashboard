@@ -59,7 +59,7 @@ export function StepPeers({ home, remote, hooks, verifyResult, onTxSuccess }: St
         </div>
         <div>
           <div className="label mb-1">{remote.chainLabel} → {home.chainLabel}</div>
-          <div className="mono-block mb-2">{remotePeerBytes32 || '(enter home address above)'}</div>
+          <div className="mono-block mb-2">{remotePeerBytes32 || '(enter source address above)'}</div>
         </div>
       </div>
 

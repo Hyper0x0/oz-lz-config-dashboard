@@ -10,29 +10,33 @@ import { explorerTxUrl } from '../types';
 import { NetworkHint } from './StepDelegate';
 
 /**
- * Bidirectional DVN & Executor configuration.
- * A→B: home send config + remote receive config
- * B→A: remote send config + home receive config
+ * Per-chain DVN & Executor configuration.
+ *
+ * Mental model: select DVNs once per chain.
+ * Chain A DVNs → used for A's send config (A→B) AND A's receive config (B→A).
+ * Chain B DVNs → used for B's send config (B→A) AND B's receive config (A→B).
+ *
+ * The DVN *providers* must match across chains (e.g. "LayerZero Labs" on both),
+ * but addresses differ per chain.
  */
 export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: StepProps): JSX.Element {
   const epConfig = useEndpointConfig(hooks.evm.signer);
-  const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
 
-  // ── A→B state ─────────────────────────────────────────────────────────────
-  const [abSendDvns, setAbSendDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [abRecvDvns, setAbRecvDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [abSendTx, setAbSendTx] = useState<TxState>({ status: 'idle' });
-  const [abRecvTx, setAbRecvTx] = useState<TxState>({ status: 'idle' });
+  // ── Per-chain DVN selection ──────────────────────────────────────────────
+  const [homeDvns, setHomeDvns] = useState<Map<string, DVNProvider>>(new Map());
+  const [remoteDvns, setRemoteDvns] = useState<Map<string, DVNProvider>>(new Map());
 
-  // ── B→A state ─────────────────────────────────────────────────────────────
-  const [baSendDvns, setBaSendDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [baRecvDvns, setBaRecvDvns] = useState<Map<string, DVNProvider>>(new Map());
-  const [baSendTx, setBaSendTx] = useState<TxState>({ status: 'idle' });
-  const [baRecvTx, setBaRecvTx] = useState<TxState>({ status: 'idle' });
+  // TX state: 2 tx per chain (send + receive config)
+  const [homeSendTx, setHomeSendTx] = useState<TxState>({ status: 'idle' });
+  const [homeRecvTx, setHomeRecvTx] = useState<TxState>({ status: 'idle' });
+  const [remoteSendTx, setRemoteSendTx] = useState<TxState>({ status: 'idle' });
+  const [remoteRecvTx, setRemoteRecvTx] = useState<TxState>({ status: 'idle' });
 
   // Shared config — use chain defaults
   const homeDefaults = home.evmChain?.defaults ?? home.starkChain?.defaults;
-  const [confirmations, setConfirmations] = useState(String(homeDefaults?.confirmations ?? 15));
+  const remoteDefaults = remote.evmChain?.defaults ?? remote.starkChain?.defaults;
+  const [homeConfirmations, setHomeConfirmations] = useState(String(homeDefaults?.confirmations ?? 15));
+  const [remoteConfirmations, setRemoteConfirmations] = useState(String(remoteDefaults?.confirmations ?? 15));
   const [maxMsgSize, setMaxMsgSize] = useState('10000');
 
   // Executors per chain
@@ -43,64 +47,46 @@ export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: Step
 
   // Library addresses
   const homeSendLib = verifyResult?.homeSendLib ?? home.evmChain?.sendLib ?? home.starkChain?.sendLib ?? '';
-  const remoteRecvLib = verifyResult?.remoteReceiveLib ?? remote.evmChain?.receiveLib ?? remote.starkChain?.receiveLib ?? '';
-  const remoteSendLib = verifyResult?.remoteSendLib ?? remote.evmChain?.sendLib ?? remote.starkChain?.sendLib ?? '';
   const homeRecvLib = verifyResult?.homeReceiveLib ?? home.evmChain?.receiveLib ?? home.starkChain?.receiveLib ?? '';
+  const remoteSendLib = verifyResult?.remoteSendLib ?? remote.evmChain?.sendLib ?? remote.starkChain?.sendLib ?? '';
+  const remoteRecvLib = verifyResult?.remoteReceiveLib ?? remote.evmChain?.receiveLib ?? remote.starkChain?.receiveLib ?? '';
 
   const homeChainKey = home.evmChain?.chainKey ?? home.starkChain?.chainKey ?? '';
   const remoteChainKey = remote.evmChain?.chainKey ?? remote.starkChain?.chainKey ?? '';
 
-  // Use catalog for DVN name/icon resolution during auto-fill
   const { dvns: homeCatalog } = useDVNCatalog(homeChainKey);
   const { dvns: remoteCatalog } = useDVNCatalog(remoteChainKey);
 
-  /** Resolve a DVN address to a full provider object using the catalog, fallback to truncated address */
   function resolveDvn(addr: string, catalog: DVNProvider[]): DVNProvider {
     const found = catalog.find((d) => d.address.toLowerCase() === addr.toLowerCase());
     return found ?? { name: addr.slice(0, 10) + '…', address: addr, color: '#888' };
   }
 
-  // Auto-fill from verify results — resolve names from catalog
+  // Auto-fill from verify results
   useEffect(() => {
-    if (!verifyResult?.homeDVN?.requiredDVNs?.length || abSendDvns.size > 0) return;
+    if (homeDvns.size > 0) return;
+    // Prefer send DVN (A→B direction) for home chain
+    const dvnList = verifyResult?.homeDVN?.requiredDVNs ?? verifyResult?.homeReceiveDVN?.requiredDVNs;
+    if (!dvnList?.length) return;
     const pre = new Map<string, DVNProvider>();
-    for (const addr of verifyResult.homeDVN.requiredDVNs) pre.set(addr.toLowerCase(), resolveDvn(addr, homeCatalog));
-    if (pre.size > 0) setAbSendDvns(pre);
-  }, [verifyResult?.homeDVN?.requiredDVNs?.length, homeCatalog.length]); // eslint-disable-line
+    for (const addr of dvnList) pre.set(addr.toLowerCase(), resolveDvn(addr, homeCatalog));
+    if (pre.size > 0) setHomeDvns(pre);
+  }, [verifyResult?.homeDVN?.requiredDVNs?.length, verifyResult?.homeReceiveDVN?.requiredDVNs?.length, homeCatalog.length]); // eslint-disable-line
 
   useEffect(() => {
-    if (!verifyResult?.remoteDVN?.requiredDVNs?.length || abRecvDvns.size > 0) return;
+    if (remoteDvns.size > 0) return;
+    const dvnList = verifyResult?.remoteSendDVN?.requiredDVNs ?? verifyResult?.remoteDVN?.requiredDVNs;
+    if (!dvnList?.length) return;
     const pre = new Map<string, DVNProvider>();
-    for (const addr of verifyResult.remoteDVN.requiredDVNs) pre.set(addr.toLowerCase(), resolveDvn(addr, remoteCatalog));
-    if (pre.size > 0) setAbRecvDvns(pre);
-  }, [verifyResult?.remoteDVN?.requiredDVNs?.length, remoteCatalog.length]); // eslint-disable-line
-
-  useEffect(() => {
-    if (!verifyResult?.remoteSendDVN?.requiredDVNs?.length || baSendDvns.size > 0) return;
-    const pre = new Map<string, DVNProvider>();
-    for (const addr of verifyResult.remoteSendDVN.requiredDVNs) pre.set(addr.toLowerCase(), resolveDvn(addr, remoteCatalog));
-    if (pre.size > 0) setBaSendDvns(pre);
-  }, [verifyResult?.remoteSendDVN?.requiredDVNs?.length, remoteCatalog.length]); // eslint-disable-line
-
-  useEffect(() => {
-    if (!verifyResult?.homeReceiveDVN?.requiredDVNs?.length || baRecvDvns.size > 0) return;
-    const pre = new Map<string, DVNProvider>();
-    for (const addr of verifyResult.homeReceiveDVN.requiredDVNs) pre.set(addr.toLowerCase(), resolveDvn(addr, homeCatalog));
-    if (pre.size > 0) setBaRecvDvns(pre);
-  }, [verifyResult?.homeReceiveDVN?.requiredDVNs?.length, homeCatalog.length]); // eslint-disable-line
-
-  function toggleDvn(dir: 'AtoB' | 'BtoA', side: 'send' | 'recv', addr: string, p: DVNProvider): void {
-    const setter = dir === 'AtoB'
-      ? (side === 'send' ? setAbSendDvns : setAbRecvDvns)
-      : (side === 'send' ? setBaSendDvns : setBaRecvDvns);
-    setter((prev) => { const next = new Map(prev); next.has(addr) ? next.delete(addr) : next.set(addr, p); return next; });
-  }
+    for (const addr of dvnList) pre.set(addr.toLowerCase(), resolveDvn(addr, remoteCatalog));
+    if (pre.size > 0) setRemoteDvns(pre);
+  }, [verifyResult?.remoteSendDVN?.requiredDVNs?.length, verifyResult?.remoteDVN?.requiredDVNs?.length, remoteCatalog.length]); // eslint-disable-line
 
   // ── Set config handlers ───────────────────────────────────────────────────
 
   async function handleSetConfig(
     side: typeof home, lib: string, remoteEid: number, dvns: Map<string, DVNProvider>,
-    exec: string, txSetter: (s: TxState) => void, includeExecutor: boolean,
+    exec: string, confirmations: string, txSetter: (s: TxState) => void, includeExecutor: boolean,
   ): Promise<void> {
     txSetter({ status: 'pending' });
     const dvnAddrs = [...dvns.keys()];
@@ -131,117 +117,142 @@ export function StepDVN({ home, remote, hooks, verifyResult, onTxSuccess }: Step
     if (result.status === 'success') onTxSuccess(side === home ? 'home' : 'remote');
   }
 
-  // ── Render direction ──────────────────────────────────────────────────────
+  const homeExec = homeExecOverride || homeExecutor;
+  const remoteExec = remoteExecOverride || remoteExecutor;
 
-  function renderDirection(
-    dir: 'AtoB' | 'BtoA',
-    srcSide: typeof home, dstSide: typeof remote,
-    sendDvns: Map<string, DVNProvider>, recvDvns: Map<string, DVNProvider>,
-    srcLib: string, dstLib: string,
-    srcExec: string, srcExecOverride: string, setSrcExecOverride: (v: string) => void,
-    sendTx: TxState, recvTx: TxState,
-    setSendTx: (s: TxState) => void, setRecvTx: (s: TxState) => void,
-    srcChainKey: string, dstChainKey: string,
-  ): JSX.Element {
-    const effectiveExec = srcExecOverride || srcExec;
-    return (
-      <div>
-        <div className="form-grid mb-3">
-          <div>
-            <div className="label">Block confirmations</div>
-            <input className="input" value={confirmations} onChange={(e) => setConfirmations(e.target.value)} placeholder={String(homeDefaults?.confirmations ?? 15)} />
-            {homeDefaults && (
-              <div className="text-[11px] text-[var(--text-muted)] mt-1">
-                Recommended: {homeDefaults.confirmations} · {homeDefaults.requiredDVNs}+ required DVNs
-              </div>
-            )}
-          </div>
-          <div>
-            <div className="label">Executor ({srcSide.chainLabel})</div>
-            {srcExec
-              ? <div className="text-[11px] text-[var(--text-muted)] mb-1">Auto-filled from LZ API</div>
-              : <div className="text-[11px] text-[var(--text-muted)] mb-1">Enter manually</div>}
-            <input className="input" value={effectiveExec}
-              onChange={(e) => setSrcExecOverride(e.target.value)}
-              readOnly={!!srcExec && !srcExecOverride}
-              style={srcExec && !srcExecOverride ? { color: 'var(--text-muted)' } : undefined} />
-          </div>
-        </div>
-
-        <div className="step-actions" style={{ alignItems: 'start' }}>
-          {/* Send Config (on source chain) */}
-          <div>
-            <div className="label mb-1">Send DVNs — {srcSide.chainLabel}</div>
-            <DVNPicker chainKey={srcChainKey} selected={sendDvns} onToggle={(a, p) => toggleDvn(dir, 'send', a, p)} />
-            {sendDvns.size === 0 && <div className="text-[11px] text-[var(--text-muted)] mt-1">Select at least one DVN</div>}
-            <div className="mt-2">
-              <NetworkHint side={srcSide} />
-              <button className="btn btn-primary"
-                disabled={!srcSide.isConnected || srcSide.needsNetworkSwitch || sendDvns.size === 0 || !srcLib}
-                onClick={() => handleSetConfig(srcSide, srcLib, dstSide.chain.eid, sendDvns, effectiveExec, setSendTx, true)}>
-                Set Send Config
-              </button>
-              <div className="mt-1.5"><TxStatus state={sendTx} explorerUrl={explorerTxUrl(srcSide)} /></div>
-            </div>
-          </div>
-
-          {/* Receive Config (on destination chain) */}
-          <div>
-            <div className="label mb-1">Receive DVNs — {dstSide.chainLabel}</div>
-            <DVNPicker chainKey={dstChainKey} selected={recvDvns} onToggle={(a, p) => toggleDvn(dir, 'recv', a, p)} />
-            {recvDvns.size === 0 && <div className="text-[11px] text-[var(--text-muted)] mt-1">Select at least one DVN</div>}
-            <div className="mt-2">
-              <NetworkHint side={dstSide} />
-              <button className="btn btn-primary"
-                disabled={!dstSide.isConnected || dstSide.needsNetworkSwitch || recvDvns.size === 0 || !dstLib}
-                onClick={() => handleSetConfig(dstSide, dstLib, srcSide.chain.eid, recvDvns, '', setRecvTx, false)}>
-                Set Receive Config
-              </button>
-              <div className="mt-1.5"><TxStatus state={recvTx} explorerUrl={explorerTxUrl(dstSide)} /></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Check if home and remote have same DVN providers (by name) — warn if not
+  const homeNames = [...homeDvns.values()].map((d) => d.name).sort();
+  const remoteNames = [...remoteDvns.values()].map((d) => d.name).sort();
+  const providersMismatch = homeDvns.size > 0 && remoteDvns.size > 0 &&
+    (homeNames.length !== remoteNames.length || homeNames.some((n, i) => n !== remoteNames[i]));
 
   return (
     <div>
       <p className="step-hint">
-        Configure DVN providers in <strong>both directions</strong>. Each direction needs send config (source chain) + receive config (destination chain).
+        Select DVN providers <strong>per chain</strong>. The same providers must be selected on both chains
+        (addresses differ, but providers like "LayerZero Labs" must match). Each chain's DVNs are used for both
+        its send config and the other chain's receive config.
       </p>
 
-      {/* Direction tabs */}
-      <div className="flex gap-2 mb-4">
-        <button className={`tab-btn ${direction === 'AtoB' ? 'tab-btn-active' : ''}`}
-          onClick={() => setDirection('AtoB')}>
-          {home.chainLabel} → {remote.chainLabel}
-          {abSendTx.status === 'success' && abRecvTx.status === 'success' && <span className="ml-1.5 text-[var(--secondary)]">✓</span>}
-        </button>
-        <button className={`tab-btn ${direction === 'BtoA' ? 'tab-btn-active' : ''}`}
-          onClick={() => setDirection('BtoA')}>
-          {remote.chainLabel} → {home.chainLabel}
-          {baSendTx.status === 'success' && baRecvTx.status === 'success' && <span className="ml-1.5 text-[var(--secondary)]">✓</span>}
-        </button>
+      {providersMismatch && (
+        <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
+          <span>DVN providers don't match across chains — both chains must use the same set of providers, or messages will be rejected.</span>
+        </div>
+      )}
+
+      <div className="step-actions" style={{ alignItems: 'start' }}>
+        {/* ── Chain A (Home) ── */}
+        <div>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary mb-3">
+            {home.chainLabel}
+          </div>
+
+          <div className="mb-3">
+            <div className="label">DVN providers</div>
+            <DVNPicker chainKey={homeChainKey} selected={homeDvns} onToggle={(a, p) => {
+              setHomeDvns((prev) => { const next = new Map(prev); next.has(a) ? next.delete(a) : next.set(a, p); return next; });
+            }} />
+            {homeDvns.size === 0 && <div className="text-[11px] text-[var(--text-muted)] mt-1">Select at least one DVN</div>}
+          </div>
+
+          <div className="form-grid mb-3">
+            <div>
+              <div className="label">Block confirmations</div>
+              <input className="input" value={homeConfirmations} onChange={(e) => setHomeConfirmations(e.target.value)}
+                placeholder={String(homeDefaults?.confirmations ?? 15)} />
+              {homeDefaults && (
+                <div className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Recommended: {homeDefaults.confirmations} · {homeDefaults.requiredDVNs}+ DVNs
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="label">Executor</div>
+              <input className="input" value={homeExec}
+                onChange={(e) => setHomeExecOverride(e.target.value)}
+                readOnly={!!homeExecutor && !homeExecOverride}
+                style={homeExecutor && !homeExecOverride ? { color: 'var(--text-muted)' } : undefined} />
+            </div>
+          </div>
+
+          {/* Send config: home → remote */}
+          <div className="mb-3">
+            <NetworkHint side={home} />
+            <button className="btn btn-primary"
+              disabled={!home.isConnected || home.needsNetworkSwitch || homeDvns.size === 0 || !homeSendLib}
+              onClick={() => handleSetConfig(home, homeSendLib, remote.chain.eid, homeDvns, homeExec, homeConfirmations, setHomeSendTx, true)}>
+              Set Send Config ({home.chainLabel} → {remote.chainLabel})
+            </button>
+            <div className="mt-1.5"><TxStatus state={homeSendTx} explorerUrl={explorerTxUrl(home)} /></div>
+          </div>
+
+          {/* Receive config: home receives from remote (B→A) */}
+          <div>
+            <button className="btn btn-primary"
+              disabled={!home.isConnected || home.needsNetworkSwitch || homeDvns.size === 0 || !homeRecvLib}
+              onClick={() => handleSetConfig(home, homeRecvLib, remote.chain.eid, homeDvns, '', homeConfirmations, setHomeRecvTx, false)}>
+              Set Receive Config ({remote.chainLabel} → {home.chainLabel})
+            </button>
+            <div className="mt-1.5"><TxStatus state={homeRecvTx} explorerUrl={explorerTxUrl(home)} /></div>
+          </div>
+        </div>
+
+        {/* ── Chain B (Remote) ── */}
+        <div>
+          <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary mb-3">
+            {remote.chainLabel}
+          </div>
+
+          <div className="mb-3">
+            <div className="label">DVN providers</div>
+            <DVNPicker chainKey={remoteChainKey} selected={remoteDvns} onToggle={(a, p) => {
+              setRemoteDvns((prev) => { const next = new Map(prev); next.has(a) ? next.delete(a) : next.set(a, p); return next; });
+            }} />
+            {remoteDvns.size === 0 && <div className="text-[11px] text-[var(--text-muted)] mt-1">Select at least one DVN</div>}
+          </div>
+
+          <div className="form-grid mb-3">
+            <div>
+              <div className="label">Block confirmations</div>
+              <input className="input" value={remoteConfirmations} onChange={(e) => setRemoteConfirmations(e.target.value)}
+                placeholder={String(remoteDefaults?.confirmations ?? 15)} />
+              {remoteDefaults && (
+                <div className="text-[11px] text-[var(--text-muted)] mt-1">
+                  Recommended: {remoteDefaults.confirmations} · {remoteDefaults.requiredDVNs}+ DVNs
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="label">Executor</div>
+              <input className="input" value={remoteExec}
+                onChange={(e) => setRemoteExecOverride(e.target.value)}
+                readOnly={!!remoteExecutor && !remoteExecOverride}
+                style={remoteExecutor && !remoteExecOverride ? { color: 'var(--text-muted)' } : undefined} />
+            </div>
+          </div>
+
+          {/* Send config: remote → home */}
+          <div className="mb-3">
+            <NetworkHint side={remote} />
+            <button className="btn btn-primary"
+              disabled={!remote.isConnected || remote.needsNetworkSwitch || remoteDvns.size === 0 || !remoteSendLib}
+              onClick={() => handleSetConfig(remote, remoteSendLib, home.chain.eid, remoteDvns, remoteExec, remoteConfirmations, setRemoteSendTx, true)}>
+              Set Send Config ({remote.chainLabel} → {home.chainLabel})
+            </button>
+            <div className="mt-1.5"><TxStatus state={remoteSendTx} explorerUrl={explorerTxUrl(remote)} /></div>
+          </div>
+
+          {/* Receive config: remote receives from home (A→B) */}
+          <div>
+            <button className="btn btn-primary"
+              disabled={!remote.isConnected || remote.needsNetworkSwitch || remoteDvns.size === 0 || !remoteRecvLib}
+              onClick={() => handleSetConfig(remote, remoteRecvLib, home.chain.eid, remoteDvns, '', remoteConfirmations, setRemoteRecvTx, false)}>
+              Set Receive Config ({home.chainLabel} → {remote.chainLabel})
+            </button>
+            <div className="mt-1.5"><TxStatus state={remoteRecvTx} explorerUrl={explorerTxUrl(remote)} /></div>
+          </div>
+        </div>
       </div>
-
-      {direction === 'AtoB' && renderDirection(
-        'AtoB', home, remote,
-        abSendDvns, abRecvDvns,
-        homeSendLib, remoteRecvLib,
-        homeExecutor, homeExecOverride, setHomeExecOverride,
-        abSendTx, abRecvTx, setAbSendTx, setAbRecvTx,
-        homeChainKey, remoteChainKey,
-      )}
-
-      {direction === 'BtoA' && renderDirection(
-        'BtoA', remote, home,
-        baSendDvns, baRecvDvns,
-        remoteSendLib, homeRecvLib,
-        remoteExecutor, remoteExecOverride, setRemoteExecOverride,
-        baSendTx, baRecvTx, setBaSendTx, setBaRecvTx,
-        remoteChainKey, homeChainKey,
-      )}
     </div>
   );
 }

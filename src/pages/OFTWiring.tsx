@@ -10,7 +10,9 @@ import { ConfigureFlow } from '@/components/configure/ConfigureFlow';
 import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
-import type { PathwayVerifyResult, TokenInfo, PeerEntry } from '@/types';
+import type { PathwayVerifyResult, TokenInfo, PeerEntry, UlnConfig, ExecutorConfig } from '@/types';
+import { downloadJson } from '@/components/TxStatus';
+import { decodeEnforcedOptions } from '@/utils/lzOptions';
 
 type Tab = 'verify' | 'configure';
 type WiringMode = 'bridge-oft' | 'oft-oft';
@@ -100,10 +102,11 @@ export function OFTWiring(): JSX.Element {
     setDetecting(true);
     detectTimer.current = setTimeout(async () => {
       try {
-        // Detect home side
+        // Detect home side — prefer wallet RPC when available
         let homeType: 'adapter' | 'oft' | null = null;
         if (evmHome && homeValid) {
-          homeType = await wiring.detectOFTType(homeAddr, evmHome.rpc).catch(() => null);
+          const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
+          homeType = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp).catch(() => null);
         } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
           if (r) {
@@ -114,7 +117,8 @@ export function OFTWiring(): JSX.Element {
         // Detect remote side
         let remoteType: 'adapter' | 'oft' | null = null;
         if (evmRemote && remoteValid) {
-          remoteType = await wiring.detectOFTType(remoteAddr, evmRemote.rpc).catch(() => null);
+          const rwp = evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
+          remoteType = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp).catch(() => null);
         } else if (isStarknet(remote) && remoteValid) {
           const starkRemote = remote as StarknetChain;
           const r = await cairo.detectCairoOFTType(remoteAddr, starkRemote.rpc).catch(() => null);
@@ -149,7 +153,8 @@ export function OFTWiring(): JSX.Element {
         const evmEntries = evmChains
           .filter((c) => c.eid !== evmHome.eid)
           .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
-        const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry]);
+        const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
+        const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry], wp);
         setPeers(result);
       } else if (starkHome) {
         const evmEntries = evmChains
@@ -198,7 +203,8 @@ export function OFTWiring(): JSX.Element {
       // Fetch only token name/symbol — verify runs separately via auto-debounce
       try {
         const wp = walletProviderForHome();
-        const info = await wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp);
+        const rwp = walletProviderForRemote();
+        const info = await wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp, rwp);
         setTokenInfo(info);
       } catch (e) {
         setTokenInfoError('Could not read token names: ' + (e instanceof Error ? e.message : String(e)));
@@ -210,11 +216,13 @@ export function OFTWiring(): JSX.Element {
       const starkAddr = isStarknet(home) ? homeAddr : remoteAddr;
       const starkData = isStarknet(home) ? (home as StarknetChain) : (remote as StarknetChain);
       const isEvmAdapter = mode === 'bridge-oft';
+      // Prefer wallet provider for EVM reads
+      const evmWp = evmSide && evm.provider && evm.chainId === evmSide.chainId ? evm.provider : undefined;
 
       // Read EVM side info
       let evmName: { name: string; symbol: string } | null = null;
       if (evmSide && isAddr(evmAddr)) {
-        try { evmName = await wiring.readEvmSideInfo(evmAddr, evmSide.rpc, isEvmAdapter); } catch { /* */ }
+        try { evmName = await wiring.readEvmSideInfo(evmAddr, evmSide.rpc, isEvmAdapter, evmWp); } catch { /* */ }
       }
 
       // Read Starknet side: try token() first (adapter), then read name from underlying ERC20
@@ -238,12 +246,12 @@ export function OFTWiring(): JSX.Element {
         }
       }
 
-      // Also read underlying from EVM adapter if applicable
+      // Also read underlying from EVM adapter if applicable — use wallet provider
       if (isEvmAdapter && evmSide && isAddr(evmAddr) && !evmUnderlyingToken) {
         try {
           const { Contract: EContract, JsonRpcProvider: EProvider } = await import('ethers');
-          const p = new EProvider(evmSide.rpc);
-          const c = new EContract(evmAddr, (await import('@/abis/evm/OFTAdapter.json')).default, p);
+          const provider = evmWp ?? new EProvider(evmSide.rpc);
+          const c = new EContract(evmAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
           const tokenAddr = await c.token() as string;
           setEvmUnderlyingToken(tokenAddr);
         } catch { /* not an adapter */ }
@@ -306,12 +314,12 @@ export function OFTWiring(): JSX.Element {
                 <div className="flex gap-1.5 items-center">
                   {detectedHome && (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
-                      Home: {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
+                      Source: {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
                     </span>
                   )}
                   {detectedRemote && (
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedRemote === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
-                      Remote: {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
+                      Dest: {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
                     </span>
                   )}
                 </div>
@@ -333,7 +341,7 @@ export function OFTWiring(): JSX.Element {
           {/* Chain selectors */}
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} chain (home) — EID {home.eid}</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} chain (source) — EID {home.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
                 disabledEid={remote.eid}
                 onSelect={(c) => { setHomeChain(c); clearData(); setTab('verify'); }} />
@@ -348,7 +356,7 @@ export function OFTWiring(): JSX.Element {
                 clearData();
               }}>⇄</button>
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} chain (remote) — EID {remote.eid}</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} chain (destination) — EID {remote.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
                 disabledEid={home.eid}
                 onSelect={(c) => { setRemoteChain(c); clearData(); setTab('verify'); }} />
@@ -358,11 +366,11 @@ export function OFTWiring(): JSX.Element {
           {/* Address inputs */}
           <div className="flex gap-3 items-end mt-3">
             <div className="flex-1">
-              <Field label={`${homeLabel} address (home)`} value={homeAddr} onChange={setHomeAddr} />
+              <Field label={`${homeLabel} address (source)`} value={homeAddr} onChange={setHomeAddr} />
             </div>
             <div className="w-[34px] flex-shrink-0" /> {/* spacer aligned with swap button above */}
             <div className="flex-1">
-              <Field label={`${remoteLabel} address (remote)`} value={remoteAddr} onChange={setRemoteAddr} />
+              <Field label={`${remoteLabel} address (destination)`} value={remoteAddr} onChange={setRemoteAddr} />
             </div>
           </div>
 
@@ -394,7 +402,7 @@ export function OFTWiring(): JSX.Element {
           {tokenInfo && (
             <div className="token-banner">
               <TokenBadge label={`Home (${home.name})`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
-              <span style={{ color: '#444', fontSize: 18 }}>↔</span>
+              <span className="text-on-surface-variant text-lg">↔</span>
               <TokenBadge label={`Remote (${remote.name})`} name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
             </div>
           )}
@@ -421,6 +429,7 @@ export function OFTWiring(): JSX.Element {
                 homeAddr={homeAddr} remoteAddr={remoteAddr}
                 cairo={cairo} cairoEndpoint={cairoEndpoint}
                 readEvmSide={readEvmSideForStarknet}
+                evmWalletProvider={walletProviderForHome() ?? walletProviderForRemote()}
                 fetchTick={starkFetchTick}
               />
             )}
@@ -653,7 +662,7 @@ interface StarkSideState {
   recvLib: string | null;
   recvLibIsDefault: boolean;
   delegate: string | null;
-  enforcedOptions: boolean;
+  enforcedOptions: string | null;
   peer: string | null;
   dvnSend: import('@/utils/cairoLzConfig').DecodedStarknetUln | null;
   dvnRecv: import('@/utils/cairoLzConfig').DecodedStarknetUln | null;
@@ -675,18 +684,26 @@ function CheckRow({ label, passed, detail, severity = 'critical' }: {
   );
 }
 
-function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoEndpoint, readEvmSide, fetchTick }: {
+function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoEndpoint, readEvmSide, evmWalletProvider, fetchTick }: {
   home: AnyChain; remote: AnyChain;
   homeAddr: string; remoteAddr: string;
   cairo: ReturnType<typeof useCairoOFT>;
   cairoEndpoint: ReturnType<typeof useCairoEndpoint>;
   readEvmSide: ReturnType<typeof useLZVerify>['readEvmSideForStarknet'];
+  evmWalletProvider?: import('ethers').BrowserProvider | null;
   fetchTick?: number;
 }): JSX.Element {
   const starkChainData = (isStarknet(home) ? home : remote) as StarknetChain;
   const evmChainData   = (isStarknet(home) ? remote : home) as LZChain & { kind: 'evm' };
   const cairoAddr = isStarknet(home) ? homeAddr : remoteAddr;
   const evmAddr   = isStarknet(home) ? remoteAddr : homeAddr;
+  const { resolveName: resolveEvmDvn } = useDVNCatalog(evmChainData.chainKey);
+
+  /** Format a DVN address with its resolved name if known. */
+  function dvnLabel(addr: string): string {
+    const name = resolveEvmDvn(addr);
+    return name ? `${name} (${addr.slice(0, 8)}…${addr.slice(-4)})` : addr;
+  }
 
   const [checking, setChecking] = useState(false);
   const [evmState, setEvmState] = useState<EvmSideState | null>(null);
@@ -703,7 +720,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
     setChecking(true); setError(null); setEvmState(null); setStarkState(null);
     try {
       const [evmResult, starkResult] = await Promise.allSettled([
-        readEvmSide(evmAddr, starkChainData.eid, evmChainData),
+        readEvmSide(evmAddr, starkChainData.eid, evmChainData, evmWalletProvider ?? undefined),
         (async (): Promise<StarkSideState> => {
           const [sendLib, recvLibResult, delegate, enforcedOptions, peerState] = await Promise.all([
             cairoEndpoint.readSendLibrary(starkChainData.endpoint, cairoAddr, evmChainData.eid, starkChainData.rpc),
@@ -756,9 +773,36 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             {home.name} (EID {home.eid}) ↔ {remote.name} (EID {remote.eid})
           </span>
         </div>
-        <button className="btn btn-primary" onClick={runChecks} disabled={checking || !isAddr(cairoAddr) || !isAddr(evmAddr)}>
-          {checking ? 'Checking…' : 'Run checks'}
-        </button>
+        <div className="flex gap-2">
+          {(evmState || starkState) && (
+            <button className="btn btn-ghost text-xs" onClick={() => {
+              downloadJson({
+                exportedAt: new Date().toISOString(),
+                pathway: { evm: evmChainData.name, starknet: starkChainData.name },
+                evmSide: evmState ? {
+                  sendLib: evmState.sendLib, recvLib: evmState.recvLib, recvLibIsDefault: evmState.recvLibIsDefault,
+                  executor: evmState.executor ? { executor: evmState.executor.executor, maxMessageSize: evmState.executor.maxMessageSize } : null,
+                  dvnSend: evmState.dvnSend ? { confirmations: String(evmState.dvnSend.confirmations), requiredDVNCount: evmState.dvnSend.requiredDVNCount, requiredDVNs: evmState.dvnSend.requiredDVNs } : null,
+                  dvnRecv: evmState.dvnRecv ? { confirmations: String(evmState.dvnRecv.confirmations), requiredDVNCount: evmState.dvnRecv.requiredDVNCount, requiredDVNs: evmState.dvnRecv.requiredDVNs } : null,
+                  enforcedOptions: optionsToJson(evmState.enforcedOptions), delegate: evmState.delegate, peer: evmState.peer,
+                } : null,
+                starknetSide: starkState ? {
+                  sendLib: starkState.sendLib, recvLib: starkState.recvLib, recvLibIsDefault: starkState.recvLibIsDefault,
+                  executor: starkState.executor ? { executor: starkState.executor.executor, maxMessageSize: starkState.executor.maxMessageSize } : null,
+                  dvnSend: starkState.dvnSend ? { confirmations: String(starkState.dvnSend.confirmations), requiredDVNCount: starkState.dvnSend.requiredDVNCount, requiredDVNs: starkState.dvnSend.requiredDVNs } : null,
+                  dvnRecv: starkState.dvnRecv ? { confirmations: String(starkState.dvnRecv.confirmations), requiredDVNCount: starkState.dvnRecv.requiredDVNCount, requiredDVNs: starkState.dvnRecv.requiredDVNs } : null,
+                  enforcedOptions: optionsToJson(starkState.enforcedOptions), delegate: starkState.delegate, peer: starkState.peer,
+                } : null,
+                error: error ?? null,
+              }, `lz-config-${evmChainData.name.replace(/\s+/g, '-')}-${starkChainData.name.replace(/\s+/g, '-')}-${Date.now()}.json`);
+            }}>
+              Export config
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={runChecks} disabled={checking || !isAddr(cairoAddr) || !isAddr(evmAddr)}>
+            {checking ? 'Checking…' : 'Run checks'}
+          </button>
+        </div>
       </div>
 
       {!done && !checking && (
@@ -778,8 +822,8 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             <SummaryItem label="Send lib (EVM)" value={evmState?.sendLib ?? '—'} />
             <SummaryItem label="Recv lib (SN)" value={starkState?.recvLib ?? '—'} />
             <SummaryItem label="Executor (EVM)" value={evmState?.executor?.executor ?? '—'} />
-            <SummaryItem label="DVNs send (EVM)" value={evmState?.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount} DVN(s)` : '—'} />
-            <SummaryItem label="DVNs recv (SN)" value={starkState?.dvnRecv?.requiredDVNCount ? `${starkState.dvnRecv.requiredDVNCount} DVN(s)` : '—'} />
+            <SummaryItem label="DVNs send (EVM)" value={evmState?.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount}: ${evmState.dvnSend.requiredDVNs.map(dvnLabel).join(', ')}` : '—'} />
+            <SummaryItem label="DVNs recv (SN)" value={starkState?.dvnRecv?.requiredDVNCount ? `${starkState.dvnRecv.requiredDVNCount}: ${starkState.dvnRecv.requiredDVNs.join(', ')}` : '—'} />
           </div>
           <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-3">
             Starknet → EVM ({starkChainData.name} → {evmChainData.name})
@@ -788,8 +832,8 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             <SummaryItem label="Send lib (SN)" value={starkState?.sendLib ?? '—'} />
             <SummaryItem label="Recv lib (EVM)" value={evmState?.recvLib ?? '—'} />
             <SummaryItem label="Executor (SN)" value={starkState?.executor?.executor ?? '—'} />
-            <SummaryItem label="DVNs send (SN)" value={starkState?.dvnSend?.requiredDVNCount ? `${starkState.dvnSend.requiredDVNCount} DVN(s)` : '—'} />
-            <SummaryItem label="DVNs recv (EVM)" value={evmState?.dvnRecv?.requiredDVNCount ? `${evmState.dvnRecv.requiredDVNCount} DVN(s)` : '—'} />
+            <SummaryItem label="DVNs send (SN)" value={starkState?.dvnSend?.requiredDVNCount ? `${starkState.dvnSend.requiredDVNCount}: ${starkState.dvnSend.requiredDVNs.join(', ')}` : '—'} />
+            <SummaryItem label="DVNs recv (EVM)" value={evmState?.dvnRecv?.requiredDVNCount ? `${evmState.dvnRecv.requiredDVNCount}: ${evmState.dvnRecv.requiredDVNs.map(dvnLabel).join(', ')}` : '—'} />
           </div>
         </>
       )}
@@ -802,8 +846,11 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           </div>
           <CheckRow label="Send library set" passed={!!evmState.sendLib && evmState.sendLib !== '0x0000000000000000000000000000000000000000'} detail={evmState.sendLib ?? 'Not set'} />
           <CheckRow label="Executor configured" passed={!!evmState.executor && evmState.executor.executor !== '0x0000000000000000000000000000000000000000'} detail={evmState.executor ? `${evmState.executor.executor} (max ${evmState.executor.maxMessageSize} bytes)` : 'Not configured'} />
-          <CheckRow label="DVNs configured (send)" passed={!!evmState.dvnSend && evmState.dvnSend.requiredDVNCount > 0} detail={evmState.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount} required: ${evmState.dvnSend.requiredDVNs.join(', ')}` : 'No DVNs set'} />
-          <CheckRow label="Enforced options set" passed={!!evmState.enforcedOptions && evmState.enforcedOptions !== '0x'} detail={evmState.enforcedOptions ?? 'Not set'} />
+          <CheckRow label="DVNs configured (send)" passed={!!evmState.dvnSend && evmState.dvnSend.requiredDVNCount > 0} detail={evmState.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount} required: ${evmState.dvnSend.requiredDVNs.map(dvnLabel).join(', ')}` : 'No DVNs set'} />
+          <CheckRow label="Enforced options set" passed={!!evmState.enforcedOptions && evmState.enforcedOptions !== '0x'}
+            detail={evmState.enforcedOptions && evmState.enforcedOptions !== '0x'
+              ? (() => { const d = decodeEnforcedOptions(evmState.enforcedOptions); return d ? `lzReceive gas: ${d.gas}${d.value ? ` + ${d.value} native` : ''}` : evmState.enforcedOptions; })()
+              : 'Not set'} />
           <CheckRow label="Delegate set" passed={!!evmState.delegate && evmState.delegate !== '0x0000000000000000000000000000000000000000'} detail={evmState.delegate ?? 'Not set'} severity="warning" />
           <CheckRow label="Peer set (EVM → Starknet)"
             passed={!!evmState.peer && evmState.peer !== ZERO64 && expectedEvmPeer !== null && evmState.peer.toLowerCase() === expectedEvmPeer.toLowerCase()}
@@ -814,7 +861,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           <CheckRow label="Receive library set" passed={!!evmState.recvLib && evmState.recvLib !== '0x0000000000000000000000000000000000000000' && !evmState.recvLibIsDefault}
             detail={evmState.recvLib ? `${evmState.recvLib}${evmState.recvLibIsDefault ? ' (default — set explicitly)' : ''}` : 'Not set'}
             severity={evmState.recvLibIsDefault ? 'warning' : 'critical'} />
-          <CheckRow label="DVNs configured (receive)" passed={!!evmState.dvnRecv && evmState.dvnRecv.requiredDVNCount > 0} detail={evmState.dvnRecv?.requiredDVNCount ? `${evmState.dvnRecv.requiredDVNCount} required: ${evmState.dvnRecv.requiredDVNs.join(', ')}` : 'No DVNs set'} />
+          <CheckRow label="DVNs configured (receive)" passed={!!evmState.dvnRecv && evmState.dvnRecv.requiredDVNCount > 0} detail={evmState.dvnRecv?.requiredDVNCount ? `${evmState.dvnRecv.requiredDVNCount} required: ${evmState.dvnRecv.requiredDVNs.map(dvnLabel).join(', ')}` : 'No DVNs set'} />
         </>
       )}
 
@@ -833,7 +880,10 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           {starkState.dvnSend && (
             <CheckRow label="Block confirmations set" passed={starkState.dvnSend.confirmations > 0n} detail={starkState.dvnSend.confirmations > 0n ? `${starkState.dvnSend.confirmations} blocks` : 'Using default (0)'} severity="warning" />
           )}
-          <CheckRow label="Enforced options set" passed={starkState.enforcedOptions} detail={starkState.enforcedOptions ? 'Set' : 'Not set'} />
+          <CheckRow label="Enforced options set" passed={!!starkState.enforcedOptions}
+            detail={starkState.enforcedOptions
+              ? (() => { const d = decodeEnforcedOptions(starkState.enforcedOptions); return d ? `lzReceive gas: ${d.gas}${d.value ? ` + ${d.value} native` : ''}` : starkState.enforcedOptions; })()
+              : 'Not set'} />
           <CheckRow label="Delegate set" passed={!!starkState.delegate} detail={starkState.delegate ?? 'Not set'} severity="warning" />
           <CheckRow label="Peer set (Starknet → EVM)"
             passed={!!starkState.peer && starkState.peer !== ZERO64 && expectedCairoPeer !== null && starkState.peer.toLowerCase() === expectedCairoPeer.toLowerCase()}
@@ -873,13 +923,13 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="font-headline text-sm font-bold text-on-surface">Connected Peers</div>
-          <div className="text-[11px] text-on-surface-variant mt-0.5">{chainName || 'select home chain'}</div>
+          <div className="text-[11px] text-on-surface-variant mt-0.5">{chainName || 'select source chain'}</div>
         </div>
         <button
           className="btn btn-primary text-[12px] py-1 px-2.5"
           disabled={!canScan || scanning}
           onClick={onScan}
-          title={!canScan ? 'Enter a contract address and select home chain first' : ''}
+          title={!canScan ? 'Enter a contract address and select source chain first' : ''}
         >
           {scanning ? 'Scanning…' : 'Scan'}
         </button>
@@ -990,6 +1040,40 @@ function TokenBadge({ label, name, symbol }: { label: string; name: string; symb
   );
 }
 
+// ── Config export helpers ─────────────────────────────────────────────────────
+
+function ulnToJson(uln: UlnConfig | null) {
+  if (!uln) return null;
+  return { confirmations: String(uln.confirmations), requiredDVNCount: uln.requiredDVNCount, optionalDVNCount: uln.optionalDVNCount, optionalDVNThreshold: uln.optionalDVNThreshold, requiredDVNs: uln.requiredDVNs, optionalDVNs: uln.optionalDVNs };
+}
+
+function executorToJson(ex: ExecutorConfig | null) {
+  if (!ex) return null;
+  return { maxMessageSize: ex.maxMessageSize, executor: ex.executor };
+}
+
+function optionsToJson(hex: string | null) {
+  if (!hex || hex === '0x') return null;
+  const decoded = decodeEnforcedOptions(hex);
+  return decoded ? { raw: hex, lzReceiveGas: decoded.gas, ...(decoded.value ? { nativeValue: decoded.value } : {}) } : hex;
+}
+
+function exportEvmConfig(result: PathwayVerifyResult, homeLabel: string, remoteLabel: string) {
+  downloadJson({
+    exportedAt: new Date().toISOString(),
+    pathway: { source: homeLabel, destination: remoteLabel },
+    'A_to_B': {
+      home_send: { sendLib: result.homeSendLib, executor: executorToJson(result.homeExecutor), dvn: ulnToJson(result.homeDVN), delegate: result.homeDelegate, peer: result.homePeer, enforcedOptions: optionsToJson(result.homeEnforcedOptions), rateLimit: result.homeRateLimit ? { limit: String(result.homeRateLimit.limit), window: result.homeRateLimit.window } : null },
+      remote_receive: { receiveLib: result.remoteReceiveLib, receiveLibIsDefault: result.remoteReceiveLibIsDefault, dvn: ulnToJson(result.remoteDVN), peer: result.remotePeer, enforcedOptions: optionsToJson(result.remoteEnforcedOptions) },
+    },
+    'B_to_A': {
+      remote_send: { sendLib: result.remoteSendLib, executor: executorToJson(result.remoteExecutor), dvn: ulnToJson(result.remoteSendDVN), delegate: result.remoteDelegate },
+      home_receive: { receiveLib: result.homeReceiveLib, receiveLibIsDefault: result.homeReceiveLibIsDefault, dvn: ulnToJson(result.homeReceiveDVN) },
+    },
+    checks: result.checks.map((c) => ({ label: c.label, passed: c.passed, severity: c.severity, detail: c.detail })),
+  }, `lz-config-${homeLabel.replace(/\s+/g, '-')}-${remoteLabel.replace(/\s+/g, '-')}-${Date.now()}.json`);
+}
+
 // ── Verify panel ──────────────────────────────────────────────────────────────
 
 function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAdapter = true }: {
@@ -1027,9 +1111,16 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
             {homeChain.name} ↔ {remoteChain.name} — bidirectional
           </span>
         </div>
-        <button className="btn" onClick={onVerify} disabled={verifying}>
-          {verifying ? 'Checking…' : 'Re-run checks'}
-        </button>
+        <div className="flex gap-2">
+          {result && !result.error && (
+            <button className="btn btn-ghost text-xs" onClick={() => exportEvmConfig(result, homeChain.name, remoteChain.name)}>
+              Export config
+            </button>
+          )}
+          <button className="btn" onClick={onVerify} disabled={verifying}>
+            {verifying ? 'Checking…' : 'Re-run checks'}
+          </button>
+        </div>
       </div>
 
       {!result && !verifying && (
@@ -1108,7 +1199,7 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
                 <RawRow label="Max msg size" value={result.homeExecutor ? `${result.homeExecutor.maxMessageSize} bytes` : null} />
                 <RawRow label="DVNs (required)" value={result.homeDVN?.requiredDVNs.map((a) => dvnLabel(a, resolveHome)).join('\n') ?? null} />
                 <RawRow label="Confirmations" value={result.homeDVN?.confirmations != null ? String(result.homeDVN.confirmations) : null} />
-                <RawRow label="Enforced options" value={result.homeEnforcedOptions} />
+                <RawRow label="Enforced options" value={result.homeEnforcedOptions && result.homeEnforcedOptions !== '0x' ? (() => { const d = decodeEnforcedOptions(result.homeEnforcedOptions); return d ? `lzReceive gas: ${d.gas}${d.value ? ` + ${d.value} native` : ''} (${result.homeEnforcedOptions})` : result.homeEnforcedOptions; })() : result.homeEnforcedOptions} />
                 <RawRow label="Peer bytes32" value={result.homePeer} />
                 <RawRow label="Delegate" value={result.homeDelegate} />
                 {isAdapter && result.homeRateLimit !== undefined && (
@@ -1120,7 +1211,7 @@ function VerifyPanel({ homeChain, remoteChain, verifying, result, onVerify, isAd
                 <RawRow label="Receive library" value={result.remoteReceiveLib ? `${result.remoteReceiveLib}${result.remoteReceiveLibIsDefault ? ' (default)' : ''}` : null} />
                 <RawRow label="DVNs (required)" value={result.remoteDVN?.requiredDVNs.map((a) => dvnLabel(a, resolveRemote)).join('\n') ?? null} />
                 <RawRow label="Confirmations" value={result.remoteDVN?.confirmations != null ? String(result.remoteDVN.confirmations) : null} />
-                <RawRow label="Enforced options" value={result.remoteEnforcedOptions} />
+                <RawRow label="Enforced options" value={result.remoteEnforcedOptions && result.remoteEnforcedOptions !== '0x' ? (() => { const d = decodeEnforcedOptions(result.remoteEnforcedOptions); return d ? `lzReceive gas: ${d.gas}${d.value ? ` + ${d.value} native` : ''} (${result.remoteEnforcedOptions})` : result.remoteEnforcedOptions; })() : result.remoteEnforcedOptions} />
                 <RawRow label="Peer bytes32" value={result.remotePeer} />
               </RawSection>
               <RawSection title={`${remoteChain.name} — B→A send side`}>

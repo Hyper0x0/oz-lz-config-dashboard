@@ -1,8 +1,17 @@
+export interface TxErrorDetails {
+  contractAddr?: string;
+  functionName?: string;
+  /** Human-readable call, e.g. setPeer(40161, 0x00..00) */
+  functionCall?: string;
+  callData?: string;
+  rawError?: string;
+}
+
 export type TxState =
   | { status: 'idle' }
   | { status: 'pending' }
   | { status: 'success'; hash: string }
-  | { status: 'error'; message: string };
+  | { status: 'error'; message: string; details?: TxErrorDetails };
 
 export interface ChainConfig {
   id: number;

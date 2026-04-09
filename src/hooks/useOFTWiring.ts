@@ -10,24 +10,24 @@ import OFTABI from '@/abis/evm/OFT.json';
 import ERC20ABI from '@/abis/evm/ERC20.json';
 import type { TxState, AdapterState, PeerState, EnforcedOptionParam, IOFTAdapter, IOFTPeer, IERC20Read, TokenInfo, PeerEntry } from '@/types';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
-import { decodeContractError } from '@/utils/decodeError';
+import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 
 const SEND_MSG_TYPE = 1;
 
 interface OFTWiring {
-  readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider) => Promise<TokenInfo>;
+  readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider) => Promise<TokenInfo>;
   /** Read name + symbol from a single EVM OFT or Adapter. For adapters, follows token() first. */
-  readEvmSideInfo: (addr: string, rpc: string, isAdapterSide: boolean) => Promise<{ name: string; symbol: string }>;
+  readEvmSideInfo: (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider) => Promise<{ name: string; symbol: string }>;
   readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string) => Promise<AdapterState>;
   readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string) => Promise<PeerState>;
   /** Query peers(eid) for every entry in eidList and return results. Zero bytes32 = null. */
-  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>) => Promise<PeerEntry[]>;
+  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider) => Promise<PeerEntry[]>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
   setRateLimit: (adapterAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
   setDelegate: (contractAddr: string, delegate: string) => Promise<TxState>;
   /** Detect whether an EVM address is an OFTAdapter (token() !== self) or OFT (token() === self). */
-  detectOFTType: (addr: string, rpc: string) => Promise<'adapter' | 'oft'>;
+  detectOFTType: (addr: string, rpc: string, walletProvider?: BrowserProvider) => Promise<'adapter' | 'oft'>;
   /** Quote the LZ fee for a send */
   quoteSend: (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
   /** Execute an OFT cross-chain send (EVM). For adapters, approve first. */
@@ -50,9 +50,9 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   // ── Read ──────────────────────────────────────────────────────────────────
 
   const readTokenInfo = useCallback(
-    async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider): Promise<TokenInfo> => {
+    async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider): Promise<TokenInfo> => {
       const homeProvider = walletProvider ?? staticProvider(homeRpc);
-      const remoteProvider = staticProvider(remoteRpc);
+      const remoteProvider = remoteWalletProvider ?? staticProvider(remoteRpc);
       const adapter = adapterContract(adapterAddr, homeProvider);
       const peer = peerContract(peerAddr, remoteProvider);
 
@@ -71,8 +71,8 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const readEvmSideInfo = useCallback(
-    async (addr: string, rpc: string, isAdapterSide: boolean): Promise<{ name: string; symbol: string }> => {
-      const provider = staticProvider(rpc);
+    async (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider): Promise<{ name: string; symbol: string }> => {
+      const provider = walletProvider ?? staticProvider(rpc);
       if (isAdapterSide) {
         const adapter = adapterContract(addr, provider);
         const tokenAddr = await adapter.token();
@@ -140,8 +140,8 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const readAllPeers = useCallback(
-    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>): Promise<PeerEntry[]> => {
-      const provider = staticProvider(homeRpc);
+    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider): Promise<PeerEntry[]> => {
+      const provider = walletProvider ?? staticProvider(homeRpc);
       const c = adapterContract(bridgeAddr, provider);
       const settled = await Promise.allSettled(eidList.map((item) => c.peers(item.eid)));
       const ZERO = /^0x0+$/;
@@ -168,7 +168,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr, functionName: 'setPeer', functionCall: `setPeer(${peerEid}, ${peerBytes32})` }) };
       }
     },
     [evmSigner],
@@ -185,7 +185,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr, functionName: 'setEnforcedOptions', functionCall: `setEnforcedOptions([{ eid: ${peerEid}, msgType: ${SEND_MSG_TYPE}, options: "${opts}" }])` }) };
       }
     },
     [evmSigner],
@@ -200,7 +200,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr: adapterAddr, functionName: 'setRateLimits', functionCall: `setRateLimits([{ dstEid: ${dstEid}, limit: ${limit}, window: ${window} }])` }) };
       }
     },
     [evmSigner],
@@ -215,15 +215,15 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr, functionName: 'setDelegate', functionCall: `setDelegate(${delegate})` }) };
       }
     },
     [evmSigner],
   );
 
   const detectOFTType = useCallback(
-    async (addr: string, rpc: string): Promise<'adapter' | 'oft'> => {
-      const provider = staticProvider(rpc);
+    async (addr: string, rpc: string, walletProvider?: BrowserProvider): Promise<'adapter' | 'oft'> => {
+      const provider = walletProvider ?? staticProvider(rpc);
       const c = new Contract(addr, ['function token() view returns (address)'], provider);
       const tokenAddr = await c.token() as string;
       return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';
@@ -255,7 +255,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr: oftAddr, functionName: 'send', functionCall: `send({ dstEid: ${dstEid}, to: ${toBytes32}, amountLD: ${amountLD}, minAmountLD: ${minAmountLD} }, { nativeFee: ${fee.nativeFee}, lzTokenFee: ${fee.lzTokenFee} }, refundAddr)` }) };
       }
     },
     [evmSigner],
@@ -270,7 +270,7 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
         await tx.wait();
         return { status: 'success', hash: tx.hash };
       } catch (err) {
-        return { status: 'error', message: decodeContractError(err) };
+        return { status: 'error', message: decodeContractError(err), details: extractErrorDetails(err, { contractAddr: tokenAddr, functionName: 'approve', functionCall: `approve(${spender}, ${amount})` }) };
       }
     },
     [evmSigner],
