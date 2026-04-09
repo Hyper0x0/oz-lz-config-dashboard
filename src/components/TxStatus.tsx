@@ -32,6 +32,8 @@ const KNOWN_ERRORS: Record<string, string> = {
   '0x118cdaa7': 'OwnableUnauthorizedAccount — caller is not the contract owner.',
   '0xd009138a': 'DVN_EidNotSupported — the configured DVN does not support this remote EID/chain. Use a DVN that covers this pathway.',
   '0xf6ff4fb7': 'NoPeer — no peer address set for this remote EID. Set peers before sending.',
+  '0xa74c1c5f': 'RateLimitExceeded — the send amount exceeds the rate limit for this window. Wait or increase the limit.',
+  '0xc7c7f5b3': 'send() — OFT cross-chain send function.',
 };
 
 /** Try to extract the revert selector from an error message and decode it. */
