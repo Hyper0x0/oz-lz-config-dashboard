@@ -158,8 +158,16 @@ export function StepDVN({ home, remote, hooks, verifyResult, homePrefill, remote
   // Check if home and remote have same DVN providers (by name) — warn if not
   const homeNames = [...homeDvns.values()].map((d) => d.name).sort();
   const remoteNames = [...remoteDvns.values()].map((d) => d.name).sort();
-  const providersMismatch = homeDvns.size > 0 && remoteDvns.size > 0 &&
+  const bothSidesSelected = homeDvns.size > 0 && remoteDvns.size > 0;
+  const providersMismatch = bothSidesSelected &&
     (homeNames.length !== remoteNames.length || homeNames.some((n, i) => n !== remoteNames[i]));
+  // Which providers are missing on each side?
+  const homeNameSet = new Set(homeNames);
+  const remoteNameSet = new Set(remoteNames);
+  const missingOnRemote = homeNames.filter((n) => !remoteNameSet.has(n));
+  const missingOnHome = remoteNames.filter((n) => !homeNameSet.has(n));
+  // Can we actually validate? Only when both sides have selections.
+  const canValidateProviders = bothSidesSelected;
 
   // Confirmations rule check: source.send.confirmations must be >= destination.recv.confirmations
   // for each direction. Since the dashboard uses one field per chain, we just compare the two values.
@@ -190,8 +198,19 @@ export function StepDVN({ home, remote, hooks, verifyResult, homePrefill, remote
       )}
 
       {providersMismatch && (
+        <div className="bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
+          <div className="font-semibold mb-1">&#9888; DVN providers don't match — be careful, both chains should use the same set of providers or messages may be rejected.</div>
+          {missingOnRemote.length > 0 && (
+            <div>Missing on {remote.chainLabel}: <strong>{missingOnRemote.join(', ')}</strong></div>
+          )}
+          {missingOnHome.length > 0 && (
+            <div>Missing on {home.chainLabel}: <strong>{missingOnHome.join(', ')}</strong></div>
+          )}
+        </div>
+      )}
+      {!canValidateProviders && (homeDvns.size > 0 || remoteDvns.size > 0) && (
         <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
-          <span>DVN providers don't match across chains — both chains must use the same set of providers, or messages will be rejected.</span>
+          <span>&#9888; Select DVNs on both chains so the dashboard can verify that providers match.</span>
         </div>
       )}
 
