@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { LZ_CHAINS, filteredChains } from '@/config/lzCatalog';
 import type { LZChain, ChainDefaults } from '@/config/lzCatalog';
+import { getEvmRpc } from '@/pages/Settings';
 
 const METADATA_URL = 'https://metadata.layerzero-api.com/v1/metadata';
 
@@ -75,7 +76,11 @@ async function fetchChains(): Promise<LZChain[]> {
         const staticEntry = staticByEid[eid];
         const endpoint = staticEntry?.endpoint ?? apiEndpoint;
 
-        const rpc = entry.rpcs?.find((r) => r.url)?.url ?? '';
+        // Resolution order: user override (Settings) → static catalog → metadata API.
+        // Static beats metadata because the metadata API often returns rate-limited public endpoints.
+        const apiRpc = entry.rpcs?.find((r) => r.url)?.url ?? '';
+        const baseRpc = staticEntry?.rpc || apiRpc;
+        const rpc = getEvmRpc(chainId, baseRpc);
         if (!rpc) continue;
 
         const displayName = chainKey

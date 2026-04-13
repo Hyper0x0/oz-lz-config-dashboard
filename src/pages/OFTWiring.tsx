@@ -106,7 +106,7 @@ export function OFTWiring(): JSX.Element {
         let homeType: 'adapter' | 'oft' | null = null;
         if (evmHome && homeValid) {
           const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
-          homeType = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp).catch(() => null);
+          homeType = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp, evmHome.chainId).catch(() => null);
         } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
           if (r) {
@@ -118,7 +118,7 @@ export function OFTWiring(): JSX.Element {
         let remoteType: 'adapter' | 'oft' | null = null;
         if (evmRemote && remoteValid) {
           const rwp = evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
-          remoteType = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp).catch(() => null);
+          remoteType = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp, evmRemote.chainId).catch(() => null);
         } else if (isStarknet(remote) && remoteValid) {
           const starkRemote = remote as StarknetChain;
           const r = await cairo.detectCairoOFTType(remoteAddr, starkRemote.rpc).catch(() => null);
@@ -154,7 +154,7 @@ export function OFTWiring(): JSX.Element {
           .filter((c) => c.eid !== evmHome.eid)
           .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
         const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
-        const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry], wp);
+        const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry], wp, evmHome.chainId);
         setPeers(result);
       } else if (starkHome) {
         const evmEntries = evmChains
@@ -204,7 +204,7 @@ export function OFTWiring(): JSX.Element {
       try {
         const wp = walletProviderForHome();
         const rwp = walletProviderForRemote();
-        const info = await wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp, rwp);
+        const info = await wiring.readTokenInfo(homeAddr, remoteAddr, evmHome.rpc, evmRemote.rpc, wp, rwp, evmHome.chainId, evmRemote.chainId);
         setTokenInfo(info);
       } catch (e) {
         setTokenInfoError('Could not read token names: ' + (e instanceof Error ? e.message : String(e)));
@@ -222,7 +222,7 @@ export function OFTWiring(): JSX.Element {
       // Read EVM side info
       let evmName: { name: string; symbol: string } | null = null;
       if (evmSide && isAddr(evmAddr)) {
-        try { evmName = await wiring.readEvmSideInfo(evmAddr, evmSide.rpc, isEvmAdapter, evmWp); } catch { /* */ }
+        try { evmName = await wiring.readEvmSideInfo(evmAddr, evmSide.rpc, isEvmAdapter, evmWp, evmSide.chainId); } catch { /* */ }
       }
 
       // Read Starknet side: try token() first (adapter), then read name from underlying ERC20

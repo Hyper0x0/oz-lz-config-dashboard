@@ -1,9 +1,42 @@
 import { useCallback } from 'react';
-import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner } from 'ethers';
+import { Contract, JsonRpcProvider, JsonRpcSigner, BrowserProvider, ContractRunner, Network } from 'ethers';
 
-/** Provider with staticNetwork to skip auto-detection retry loops */
-function staticProvider(rpc: string): JsonRpcProvider {
+/**
+ * Provider with staticNetwork to skip auto-detection retry loops.
+ * When chainId is provided, the network is bound up-front so ethers never makes an
+ * eth_chainId round-trip — critical for slow public RPCs that otherwise stall every call.
+ */
+function staticProvider(rpc: string, chainId?: number): JsonRpcProvider {
+  if (chainId !== undefined) {
+    const net = Network.from(chainId);
+    return new JsonRpcProvider(rpc, net, { staticNetwork: net });
+  }
   return new JsonRpcProvider(rpc, undefined, { staticNetwork: true });
+}
+
+/** Run a list of async tasks with bounded concurrency. Used to avoid hammering public RPCs. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      try { results[i] = { status: 'fulfilled', value: await fn(items[i], i) }; }
+      catch (reason) { results[i] = { status: 'rejected', reason }; }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** Try once, then retry once after a short delay if it throws. Catches transient RPC rate limits. */
+async function withRetry<T>(fn: () => Promise<T>, delayMs = 250): Promise<T> {
+  try { return await fn(); }
+  catch {
+    await new Promise((r) => setTimeout(r, delayMs));
+    return fn();
+  }
 }
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
@@ -15,19 +48,19 @@ import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 const SEND_MSG_TYPE = 1;
 
 interface OFTWiring {
-  readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider) => Promise<TokenInfo>;
+  readTokenInfo: (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider, homeChainId?: number, remoteChainId?: number) => Promise<TokenInfo>;
   /** Read name + symbol from a single EVM OFT or Adapter. For adapters, follows token() first. */
-  readEvmSideInfo: (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider) => Promise<{ name: string; symbol: string }>;
-  readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string) => Promise<AdapterState>;
-  readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string) => Promise<PeerState>;
+  readEvmSideInfo: (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider, chainId?: number) => Promise<{ name: string; symbol: string }>;
+  readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string, homeChainId?: number) => Promise<AdapterState>;
+  readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string, remoteChainId?: number) => Promise<PeerState>;
   /** Query peers(eid) for every entry in eidList and return results. Zero bytes32 = null. */
-  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider) => Promise<PeerEntry[]>;
+  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number) => Promise<PeerEntry[]>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
   setRateLimit: (adapterAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
   setDelegate: (contractAddr: string, delegate: string) => Promise<TxState>;
   /** Detect whether an EVM address is an OFTAdapter (token() !== self) or OFT (token() === self). */
-  detectOFTType: (addr: string, rpc: string, walletProvider?: BrowserProvider) => Promise<'adapter' | 'oft'>;
+  detectOFTType: (addr: string, rpc: string, walletProvider?: BrowserProvider, chainId?: number) => Promise<'adapter' | 'oft'>;
   /** Quote the LZ fee for a send */
   quoteSend: (oftAddr: string, dstEid: number, toBytes32: string, amountLD: bigint, minAmountLD: bigint) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
   /** Execute an OFT cross-chain send (EVM). For adapters, approve first. */
@@ -50,46 +83,63 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   // ── Read ──────────────────────────────────────────────────────────────────
 
   const readTokenInfo = useCallback(
-    async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider): Promise<TokenInfo> => {
-      const homeProvider = walletProvider ?? staticProvider(homeRpc);
-      const remoteProvider = remoteWalletProvider ?? staticProvider(remoteRpc);
-      const adapter = adapterContract(adapterAddr, homeProvider);
-      const peer = peerContract(peerAddr, remoteProvider);
+    async (adapterAddr: string, peerAddr: string, homeRpc: string, remoteRpc: string, walletProvider?: BrowserProvider, remoteWalletProvider?: BrowserProvider, homeChainId?: number, remoteChainId?: number): Promise<TokenInfo> => {
+      const homeProvider = walletProvider ?? staticProvider(homeRpc, homeChainId);
+      const remoteProvider = remoteWalletProvider ?? staticProvider(remoteRpc, remoteChainId);
 
-      const tokenAddr = await adapter.token();
-      const erc20 = new Contract(tokenAddr, ERC20ABI, homeProvider) as unknown as IERC20Read;
+      // For adapters, name/symbol live on the underlying ERC20 reached via token().
+      // For pure OFTs, token() either returns self or doesn't exist — read directly from the OFT.
+      // Some OFTs don't inherit ERC20 at all and revert on name()/symbol(), so each call is wrapped.
+      async function readName(addr: string, provider: ContractRunner): Promise<{ name: string; symbol: string }> {
+        let tokenAddr = addr;
+        try {
+          const adapter = adapterContract(addr, provider);
+          const t = await adapter.token() as string;
+          if (t && t.toLowerCase() !== addr.toLowerCase()) tokenAddr = t;
+        } catch { /* not an adapter — read from the OFT itself */ }
+        const erc20 = new Contract(tokenAddr, ERC20ABI, provider) as unknown as IERC20Read;
+        const [nameRes, symbolRes] = await Promise.allSettled([erc20.name(), erc20.symbol()]);
+        return {
+          name: nameRes.status === 'fulfilled' ? (nameRes.value as string) : `${tokenAddr.slice(0, 10)}…`,
+          symbol: symbolRes.status === 'fulfilled' ? (symbolRes.value as string) : '',
+        };
+      }
 
-      const [tokenName, tokenSymbol, peerName, peerSymbol] = await Promise.all([
-        erc20.name(),
-        erc20.symbol(),
-        peer.name(),
-        peer.symbol(),
+      const [home, peer] = await Promise.all([
+        readName(adapterAddr, homeProvider),
+        readName(peerAddr, remoteProvider),
       ]);
-      return { tokenName, tokenSymbol, peerName, peerSymbol };
+      return { tokenName: home.name, tokenSymbol: home.symbol, peerName: peer.name, peerSymbol: peer.symbol };
     },
     [],
   );
 
   const readEvmSideInfo = useCallback(
-    async (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider): Promise<{ name: string; symbol: string }> => {
-      const provider = walletProvider ?? staticProvider(rpc);
+    async (addr: string, rpc: string, isAdapterSide: boolean, walletProvider?: BrowserProvider, chainId?: number): Promise<{ name: string; symbol: string }> => {
+      const provider = walletProvider ?? staticProvider(rpc, chainId);
+      // Resolve target: adapter follows token(); OFT reads directly. Each call is wrapped so a missing
+      // getter on a non-ERC20 OFT doesn't reject the whole fetch.
+      let tokenAddr = addr;
       if (isAdapterSide) {
-        const adapter = adapterContract(addr, provider);
-        const tokenAddr = await adapter.token();
-        const erc20 = new Contract(tokenAddr, ERC20ABI, provider) as unknown as IERC20Read;
-        const [name, symbol] = await Promise.all([erc20.name(), erc20.symbol()]);
-        return { name, symbol };
+        try {
+          const adapter = adapterContract(addr, provider);
+          const t = await adapter.token() as string;
+          if (t && t.toLowerCase() !== addr.toLowerCase()) tokenAddr = t;
+        } catch { /* not actually an adapter — read directly */ }
       }
-      const oft = peerContract(addr, provider);
-      const [name, symbol] = await Promise.all([oft.name(), oft.symbol()]);
-      return { name, symbol };
+      const erc20 = new Contract(tokenAddr, ERC20ABI, provider) as unknown as IERC20Read;
+      const [nameRes, symbolRes] = await Promise.allSettled([erc20.name(), erc20.symbol()]);
+      return {
+        name: nameRes.status === 'fulfilled' ? (nameRes.value as string) : `${tokenAddr.slice(0, 10)}…`,
+        symbol: symbolRes.status === 'fulfilled' ? (symbolRes.value as string) : '',
+      };
     },
     [],
   );
 
   const readAdapterState = useCallback(
-    async (adapterAddr: string, peerEid: number, homeRpc: string): Promise<AdapterState> => {
-      const provider = staticProvider(homeRpc);
+    async (adapterAddr: string, peerEid: number, homeRpc: string, homeChainId?: number): Promise<AdapterState> => {
+      const provider = staticProvider(homeRpc, homeChainId);
       const c = adapterContract(adapterAddr, provider);
       const [owner, token, peer, opts] = await Promise.all([
         c.owner(),
@@ -126,8 +176,8 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const readPeerState = useCallback(
-    async (peerAddr: string, adapterEid: number, remoteRpc: string): Promise<PeerState> => {
-      const provider = staticProvider(remoteRpc);
+    async (peerAddr: string, adapterEid: number, remoteRpc: string, remoteChainId?: number): Promise<PeerState> => {
+      const provider = staticProvider(remoteRpc, remoteChainId);
       const c = peerContract(peerAddr, provider);
       const [owner, peer, opts] = await Promise.all([
         c.owner(),
@@ -140,10 +190,12 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const readAllPeers = useCallback(
-    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider): Promise<PeerEntry[]> => {
-      const provider = walletProvider ?? staticProvider(homeRpc);
+    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number): Promise<PeerEntry[]> => {
+      const provider = walletProvider ?? staticProvider(homeRpc, chainId);
       const c = adapterContract(bridgeAddr, provider);
-      const settled = await Promise.allSettled(eidList.map((item) => c.peers(item.eid)));
+      // Bounded concurrency + single retry — public RPCs throttle dozens of parallel calls,
+      // which previously dropped random entries (often the Stark one at the tail of the array).
+      const settled = await mapLimit(eidList, 4, (item) => withRetry(() => c.peers(item.eid)));
       const ZERO = /^0x0+$/;
       return eidList.map((item, i) => {
         const res = settled[i];
@@ -222,11 +274,17 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const detectOFTType = useCallback(
-    async (addr: string, rpc: string, walletProvider?: BrowserProvider): Promise<'adapter' | 'oft'> => {
-      const provider = walletProvider ?? staticProvider(rpc);
+    async (addr: string, rpc: string, walletProvider?: BrowserProvider, chainId?: number): Promise<'adapter' | 'oft'> => {
+      const provider = walletProvider ?? staticProvider(rpc, chainId);
       const c = new Contract(addr, ['function token() view returns (address)'], provider);
-      const tokenAddr = await c.token() as string;
-      return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';
+      try {
+        const tokenAddr = await c.token() as string;
+        // Adapter: token() returns a distinct ERC20. Pure OFT: token() returns self (or reverts).
+        return tokenAddr.toLowerCase() === addr.toLowerCase() ? 'oft' : 'adapter';
+      } catch {
+        // token() not present / reverted — standard pure OFT.
+        return 'oft';
+      }
     },
     [],
   );

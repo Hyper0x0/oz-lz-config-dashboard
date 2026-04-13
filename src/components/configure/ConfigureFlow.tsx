@@ -8,8 +8,9 @@ import type { useCairoEndpoint } from '@/hooks/useCairoEndpoint';
 import type { useCairoOFT } from '@/hooks/useCairoOFT';
 import type { useEvmWallet } from '@/hooks/useEvmWallet';
 import type { useStarknetWallet } from '@/hooks/useStarknetWallet';
+import { useLZVerify } from '@/hooks/useLZVerify';
 
-import { buildStepDefs, type ChainSide, type StepId, type StepStatus, type ConfigHooks } from './types';
+import { buildStepDefs, type ChainSide, type StepId, type StepStatus, type ConfigHooks, type SideDvnPrefill } from './types';
 import { StepCard } from './StepCard';
 import { ProgressBar } from './ProgressBar';
 import { StepDelegate } from './steps/StepDelegate';
@@ -174,7 +175,10 @@ export function ConfigureFlow({
   const [txSuccessMap, setTxSuccessMap] = useState<Set<string>>(new Set());
   const [homeCairo, setHomeCairo] = useState<CairoSideState>(EMPTY_CAIRO);
   const [remoteCairo, setRemoteCairo] = useState<CairoSideState>(EMPTY_CAIRO);
+  const [homePrefill, setHomePrefill] = useState<SideDvnPrefill | null>(null);
+  const [remotePrefill, setRemotePrefill] = useState<SideDvnPrefill | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const { readEvmSideForStarknet } = useLZVerify();
 
   const homeSide = buildSide(home, homeAddr, isAdapter, evm, stark);
   const remoteSide = buildSide(remote, remoteAddr, false, evm, stark);
@@ -202,6 +206,7 @@ export function ConfigureFlow({
       contractAddr: string,
       remoteEid: number,
       setter: (s: CairoSideState) => void,
+      prefillSetter: (p: SideDvnPrefill | null) => void,
     ): Promise<void> {
       if (!starkChain || !contractAddr || contractAddr === '0x') return;
       const rpc = starkChain.rpc;
@@ -222,16 +227,27 @@ export function ConfigureFlow({
 
         let sendDvn = false;
         let recvDvn = false;
+        let sendDvnAddrs: string[] = [];
+        let recvDvnAddrs: string[] = [];
+        let executor: string | undefined;
+        let confirmations: number | undefined;
         if (sendLibAddr) {
           try {
             const uln = await ce.readSendUlnConfig(ep, contractAddr, sendLibAddr, remoteEid, rpc);
             sendDvn = !!(uln && uln.requiredDVNCount > 0);
+            if (uln?.requiredDVNs?.length) sendDvnAddrs = uln.requiredDVNs;
+            if (uln?.confirmations !== undefined) confirmations = Number(uln.confirmations);
+          } catch { /* ignore */ }
+          try {
+            const ex = await ce.readSendExecutorConfig(ep, contractAddr, sendLibAddr, remoteEid, rpc);
+            if (ex?.executor) executor = ex.executor;
           } catch { /* ignore */ }
         }
         if (recvLibAddr) {
           try {
             const uln = await ce.readReceiveUlnConfig(ep, contractAddr, recvLibAddr, remoteEid, rpc);
             recvDvn = !!(uln && uln.requiredDVNCount > 0);
+            if (uln?.requiredDVNs?.length) recvDvnAddrs = uln.requiredDVNs;
           } catch { /* ignore */ }
         }
         if (tick !== cairoReadRef.current) return; // stale
@@ -245,18 +261,43 @@ export function ConfigureFlow({
           sendDvn,
           recvDvn,
         });
+        prefillSetter({ sendDvns: sendDvnAddrs, recvDvns: recvDvnAddrs, executor, confirmations });
       } catch { /* ignore */ }
     }
 
-    // Read home side if Starknet
+    async function readEvmSidePrefill(
+      evmChain: LZChain | undefined,
+      contractAddr: string,
+      remoteEid: number,
+      prefillSetter: (p: SideDvnPrefill | null) => void,
+    ): Promise<void> {
+      if (!evmChain || !contractAddr || contractAddr === '0x') return;
+      try {
+        const wp = evm.provider && evm.chainId === evmChain.chainId ? evm.provider : undefined;
+        const r = await readEvmSideForStarknet(contractAddr, remoteEid, evmChain, wp);
+        if (tick !== cairoReadRef.current) return;
+        prefillSetter({
+          sendDvns: r.dvnSend?.requiredDVNs ?? [],
+          recvDvns: r.dvnRecv?.requiredDVNs ?? [],
+          executor: r.executor?.executor,
+          confirmations: r.dvnSend?.confirmations !== undefined ? Number(r.dvnSend.confirmations) : undefined,
+        });
+      } catch { /* ignore */ }
+    }
+
+    // Home side
     if (isStarknet(home)) {
-      void readCairoSide(home as StarknetChain, homeAddr, remote.eid, setHomeCairo);
+      void readCairoSide(home as StarknetChain, homeAddr, remote.eid, setHomeCairo, setHomePrefill);
+    } else if (isEvm(home)) {
+      void readEvmSidePrefill(home, homeAddr, remote.eid, setHomePrefill);
     }
-    // Read remote side if Starknet
+    // Remote side
     if (isStarknet(remote)) {
-      void readCairoSide(remote as StarknetChain, remoteAddr, home.eid, setRemoteCairo);
+      void readCairoSide(remote as StarknetChain, remoteAddr, home.eid, setRemoteCairo, setRemotePrefill);
+    } else if (isEvm(remote)) {
+      void readEvmSidePrefill(remote, remoteAddr, home.eid, setRemotePrefill);
     }
-  }, [homeAddr, remoteAddr, home.eid, remote.eid, refreshTick, home, remote]);
+  }, [homeAddr, remoteAddr, home.eid, remote.eid, refreshTick, home, remote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const statuses = deriveStatuses(verifyResult, isAdapter, homeSide.kind, remoteSide.kind, txSuccessMap, homeCairo, remoteCairo);
 
@@ -287,6 +328,8 @@ export function ConfigureFlow({
               remote={remoteSide}
               hooks={hooks}
               verifyResult={verifyResult}
+              homePrefill={homePrefill}
+              remotePrefill={remotePrefill}
               onTxSuccess={(side?: 'home' | 'remote') => handleTxSuccess(step.id, side || 'home')}
             />
           </StepCard>

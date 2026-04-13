@@ -65,6 +65,19 @@ export interface ConfigHooks {
   stark: ReturnType<typeof useStarknetWallet>;
 }
 
+// ── DVN prefill (read from chain) ───────────────────────────────────────────
+
+export interface SideDvnPrefill {
+  /** Required DVN addresses for the send-side ULN config (this side → other side). */
+  sendDvns: string[];
+  /** Required DVN addresses for the receive-side ULN config (other side → this side). */
+  recvDvns: string[];
+  /** Configured executor address (send side). */
+  executor?: string;
+  /** Send-side block confirmations. */
+  confirmations?: number;
+}
+
 // ── Shared step props ───────────────────────────────────────────────────────
 
 export interface StepProps {
@@ -72,6 +85,9 @@ export interface StepProps {
   remote: ChainSide;
   hooks: ConfigHooks;
   verifyResult: PathwayVerifyResult | null;
+  /** Pre-fill data read directly from each side's chain. */
+  homePrefill?: SideDvnPrefill | null;
+  remotePrefill?: SideDvnPrefill | null;
   onTxSuccess: (side?: 'home' | 'remote') => void;
 }
 

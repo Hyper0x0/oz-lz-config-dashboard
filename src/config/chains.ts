@@ -5,7 +5,7 @@ export const ARB_SEPOLIA: ChainConfig = {
   id: 421614,
   eid: 40231,
   name: 'Arbitrum Sepolia',
-  rpc: 'https://sepolia-rollup.arbitrum.io/rpc',
+  rpc: 'https://arbitrum-sepolia.publicnode.com',
 };
 
 export const BASE_SEPOLIA: ChainConfig = {

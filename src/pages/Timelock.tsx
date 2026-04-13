@@ -86,7 +86,7 @@ function StateBadge({ state }: { state: OperationState }): JSX.Element {
 const TIMELOCK_CHAINS = [
   { id: 1,       name: 'Ethereum',         rpc: 'https://eth.llamarpc.com',           explorer: 'etherscan.io' },
   { id: 42161,   name: 'Arbitrum',          rpc: 'https://arb1.arbitrum.io/rpc',       explorer: 'arbiscan.io' },
-  { id: 421614,  name: 'Arbitrum Sepolia',  rpc: 'https://sepolia-rollup.arbitrum.io/rpc', explorer: 'sepolia.arbiscan.io' },
+  { id: 421614,  name: 'Arbitrum Sepolia',  rpc: 'https://arbitrum-sepolia.publicnode.com', explorer: 'sepolia.arbiscan.io' },
   { id: 10,      name: 'Optimism',          rpc: 'https://mainnet.optimism.io',        explorer: 'optimistic.etherscan.io' },
   { id: 8453,    name: 'Base',              rpc: 'https://mainnet.base.org',           explorer: 'basescan.org' },
   { id: 84532,   name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',           explorer: 'sepolia.basescan.org' },

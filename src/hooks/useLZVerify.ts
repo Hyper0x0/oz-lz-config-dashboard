@@ -1,12 +1,17 @@
 import { useCallback } from 'react';
-import { Contract, JsonRpcProvider, FetchRequest, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress } from 'ethers';
+import { Contract, JsonRpcProvider, FetchRequest, BrowserProvider, ContractRunner, AbiCoder, ZeroAddress, Network } from 'ethers';
 
 /**
  * Create a JsonRpcProvider with:
  * - Batching disabled (avoids free-tier batch limits like DRPC's 3-request max)
- * - staticNetwork set to 'any' to skip auto-detection (avoids retry loops on slow RPCs)
+ * - When chainId is provided, the network is bound up-front so ethers skips eth_chainId
+ *   detection — critical for slow public RPCs that otherwise stall every call.
  */
-function unbatchedProvider(rpc: string): JsonRpcProvider {
+function unbatchedProvider(rpc: string, chainId?: number): JsonRpcProvider {
+  if (chainId !== undefined) {
+    const net = Network.from(chainId);
+    return new JsonRpcProvider(rpc, net, { batchMaxCount: 1, staticNetwork: net });
+  }
   return new JsonRpcProvider(rpc, undefined, { batchMaxCount: 1, staticNetwork: true });
 }
 import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
@@ -390,7 +395,7 @@ export function useLZVerify() {
     // ── EID support check — each chain independently ────────────────────────
     try {
       await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
-        const provider = p.walletProvider ?? unbatchedProvider(rpc);
+        const provider = p.walletProvider ?? unbatchedProvider(rpc, p.homeChain.chainId);
         const homeEp = endpointContract(p.homeChain.endpoint, provider);
         partial.remoteEidSupported = await homeEp.isSupportedEid(p.remoteChain.eid);
       });
@@ -401,7 +406,7 @@ export function useLZVerify() {
 
     try {
       await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
-        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc);
+        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc, p.remoteChain.chainId);
         const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
         partial.homeEidSupported = await remoteEp.isSupportedEid(p.homeChain.eid);
       });
@@ -413,7 +418,7 @@ export function useLZVerify() {
     // ── Home side reads (A→B send + B→A receive) ─────────────────────────
     try {
       await withFallbackRpc(p.homeChain.rpc, p.homeChain.rpcFallback, async (rpc) => {
-        const provider = p.walletProvider ?? unbatchedProvider(rpc);
+        const provider = p.walletProvider ?? unbatchedProvider(rpc, p.homeChain.chainId);
         const homeEp = endpointContract(p.homeChain.endpoint, provider);
         const adapter = new Contract(p.adapterAddr, OFTAdapterABI, provider) as unknown as IOFTAdapter;
 
@@ -463,7 +468,7 @@ export function useLZVerify() {
     // ── Remote side reads (A→B receive + B→A send) ──────────────────────
     try {
       await withFallbackRpc(p.remoteChain.rpc, p.remoteChain.rpcFallback, async (rpc) => {
-        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc);
+        const provider = p.remoteWalletProvider ?? unbatchedProvider(rpc, p.remoteChain.chainId);
         const remoteEp = endpointContract(p.remoteChain.endpoint, provider);
         const peer = new Contract(p.peerAddr, OFTABI, provider) as unknown as IOFTPeer;
 
@@ -535,7 +540,7 @@ export function useLZVerify() {
       enforcedOptions: null, peer: null,
     };
     try {
-      const provider = walletProvider ?? new JsonRpcProvider(chain.rpc);
+      const provider = walletProvider ?? unbatchedProvider(chain.rpc, chain.chainId);
       const ep = endpointContract(chain.endpoint, provider);
       const oft = new Contract(evmOftAddr, OFTABI, provider) as unknown as IOFTPeer;
 

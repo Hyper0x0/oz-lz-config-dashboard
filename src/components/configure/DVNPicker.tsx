@@ -53,11 +53,18 @@ export function DVNPicker({ chainKey, selected, onToggle }: Props): JSX.Element 
     return a.name.localeCompare(b.name);
   });
 
+  /** Look up an address in the chain's DVN catalog so manually-pasted addresses still surface name + icon. */
+  function resolveProvider(addr: string): DVNProvider {
+    const found = dvns.find((d) => d.address.toLowerCase() === addr.toLowerCase());
+    if (found) return found;
+    return { name: addr.slice(0, 8) + '…' + addr.slice(-4), address: addr, color: '#666' };
+  }
+
   function addManual(): void {
     const addr = manualAddr.trim().toLowerCase();
     if (!addr || addr.length < 10) return;
     if (selected.has(addr)) return;
-    onToggle(addr, { name: addr.slice(0, 8) + '…' + addr.slice(-4), address: addr, color: '#666' });
+    onToggle(addr, resolveProvider(addr));
     setManualAddr('');
   }
 
@@ -101,7 +108,7 @@ export function DVNPicker({ chainKey, selected, onToggle }: Props): JSX.Element 
           onClick={() => {
             const addr = (manualAddr || query).trim();
             if (addr.startsWith('0x') && addr.length > 10) {
-              onToggle(addr.toLowerCase(), { name: addr.slice(0, 8) + '…' + addr.slice(-4), address: addr, color: '#666' });
+              onToggle(addr.toLowerCase(), resolveProvider(addr));
               setManualAddr(''); setQuery('');
             }
           }}

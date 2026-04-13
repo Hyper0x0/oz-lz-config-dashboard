@@ -4,7 +4,7 @@ import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import type { TxState, OperationState, ITimelockController } from '@/types';
 import { operationStateLabel } from '@/utils/timelock';
 const ZERO_BYTES32 = ZeroHash;
-const DEFAULT_RPC = 'https://sepolia-rollup.arbitrum.io/rpc';
+const DEFAULT_RPC = 'https://arbitrum-sepolia.publicnode.com';
 
 interface TimelockOps {
   schedule: (

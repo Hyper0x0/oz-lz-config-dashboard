@@ -53,6 +53,11 @@ export interface CairoEndpointOps {
    * The LZ SDK recommends combining these to avoid partial configuration state.
    */
   setSendConfigsAtomic: (endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number, uln: UlnConfigParams, executor: ExecutorConfigParams, rpc: string) => Promise<TxState>;
+  /**
+   * Set ULN send config + executor config + ULN receive config in a single multicall tx.
+   * On Starknet sendLib === recvLib so this configures the entire DVN flow in one click.
+   */
+  setUlnConfigsBoth: (endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number, uln: UlnConfigParams, executor: ExecutorConfigParams, rpc: string) => Promise<TxState>;
   /** Set ULN send config (DVNs + confirmations) on the Starknet Endpoint. */
   setUlnSendConfig: (endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number, params: UlnConfigParams, rpc: string) => Promise<TxState>;
   /** Set ULN receive config (DVNs + confirmations) on the Starknet Endpoint. */
@@ -141,6 +146,30 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
       return { status: 'success', hash: tx.transaction_hash };
     } catch (e) {
       return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_configs (ULN + Executor)', functionCall: `set_send_configs(${oappAddr}, ${libAddr}, [{ eid: ${remoteEid}, ULN: { dvns: [${uln.requiredDvns.join(', ')}], confirmations: ${uln.confirmations} } }, { eid: ${remoteEid}, Executor: { executor: ${executor.executor}, maxMsgSize: ${executor.maxMessageSize} } }])` }) };
+    }
+  }, [account]);
+
+  const setUlnConfigsBoth = useCallback(async (
+    endpointAddr: string, oappAddr: string, libAddr: string, remoteEid: number,
+    uln: UlnConfigParams, executor: ExecutorConfigParams, rpc: string,
+  ): Promise<TxState> => {
+    if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
+    try {
+      const provider = new RpcProvider({ nodeUrl: rpc });
+      const contract = new Contract(StarknetEndpointABI as never[], endpointAddr, provider);
+      // Build both calls and execute as a single multicall.
+      const sendCall = contract.populate('set_send_configs', [oappAddr, libAddr, [
+        { eid: remoteEid, config_type: CONFIG_TYPE_ULN,      config: encodeUlnConfig(uln) },
+        { eid: remoteEid, config_type: CONFIG_TYPE_EXECUTOR, config: encodeExecutorConfig(executor) },
+      ]]);
+      const recvCall = contract.populate('set_receive_configs', [oappAddr, libAddr, [
+        { eid: remoteEid, config_type: CONFIG_TYPE_ULN, config: encodeUlnConfig(uln) },
+      ]]);
+      const tx = await account.execute([sendCall, recvCall]);
+      await account.waitForTransaction(tx.transaction_hash);
+      return { status: 'success', hash: tx.transaction_hash };
+    } catch (e) {
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: endpointAddr, functionName: 'set_send_configs + set_receive_configs', functionCall: `setUlnConfigsBoth(${oappAddr}, ${libAddr}, eid: ${remoteEid}, dvns: [${uln.requiredDvns.join(', ')}], confirmations: ${uln.confirmations}, executor: ${executor.executor})` }) };
     }
   }, [account]);
 
@@ -356,7 +385,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
 
   return {
     setEnforcedOptions, setLibraries, setSendLibrary, setReceiveLibrary,
-    setSendConfigsAtomic, setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
+    setSendConfigsAtomic, setUlnConfigsBoth, setUlnSendConfig, setUlnReceiveConfig, setExecutorConfig,
     setDelegate, readSendLibrary, readReceiveLibrary, readDelegate,
     readSendUlnConfig, readSendExecutorConfig, readReceiveUlnConfig,
   };

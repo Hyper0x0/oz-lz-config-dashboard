@@ -78,7 +78,7 @@ export function OFTs(): JSX.Element {
         // Detect home
         if (evmHome && homeValid) {
           const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
-          const t = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp).catch(() => null);
+          const t = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp, evmHome.chainId).catch(() => null);
           if (t) { setDetectedHome(t); setMode(t === 'adapter' ? 'bridge-oft' : 'oft-oft'); }
         } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
@@ -91,7 +91,7 @@ export function OFTs(): JSX.Element {
         // Detect remote
         if (evmRemote && remoteValid) {
           const rwp = evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
-          const t = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp).catch(() => null);
+          const t = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp, evmRemote.chainId).catch(() => null);
           if (t) setDetectedRemote(t);
         } else if (isStarknet(remote) && remoteValid) {
           const starkR = remote as StarknetChain;
@@ -266,10 +266,11 @@ export function OFTs(): JSX.Element {
       <SendPanel
         home={home} remote={remote}
         homeAddr={homeAddr} remoteAddr={remoteAddr}
-        mode={mode} evm={evm} stark={stark}
+        evm={evm} stark={stark}
         wiring={wiring} cairo={cairo}
         isTestnet={isTestnet}
-        evmUnderlyingToken={evmUnderlyingToken}
+        detectedHome={detectedHome}
+        detectedRemote={detectedRemote}
         decimals={decimals}
         walletBalance={walletBalance}
         tokenSymbol={tokenSymbol}
@@ -280,31 +281,27 @@ export function OFTs(): JSX.Element {
 
 // ── Send Panel ───────────────────────────────────────────────────────────────
 
-function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wiring, cairo, isTestnet, evmUnderlyingToken, decimals, walletBalance, tokenSymbol }: {
+function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cairo, isTestnet, detectedHome, detectedRemote, decimals, walletBalance, tokenSymbol }: {
   home: AnyChain; remote: AnyChain;
   homeAddr: string; remoteAddr: string;
-  mode: WiringMode;
   evm: ReturnType<typeof useEvmWallet>;
   stark: ReturnType<typeof useStarknetWallet>;
   wiring: ReturnType<typeof useOFTWiring>;
   cairo: ReturnType<typeof useCairoOFT>;
   isTestnet: boolean;
-  evmUnderlyingToken?: string | null;
+  detectedHome: 'adapter' | 'oft' | null;
+  detectedRemote: 'adapter' | 'oft' | null;
   decimals: number;
   walletBalance: string | null;
   tokenSymbol: string | null;
 }): JSX.Element {
-  const isAdapter = mode === 'bridge-oft';
   const [direction, setDirection] = useState<'AtoB' | 'BtoA'>('AtoB');
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [slippage, setSlippage] = useState('5');
-  const [starkTokenAddr, setStarkTokenAddr] = useState(evmUnderlyingToken ?? '');
+  const [starkTokenAddr, setStarkTokenAddr] = useState('');
   const [starkFeeToken, setStarkFeeToken] = useState('0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d');
-
-  useEffect(() => {
-    if (evmUnderlyingToken && !starkTokenAddr) setStarkTokenAddr(evmUnderlyingToken);
-  }, [evmUnderlyingToken]); // eslint-disable-line
+  const [balanceRefresh, setBalanceRefresh] = useState(0);
 
   const [quoting, setQuoting] = useState(false);
   const [quotedFee, setQuotedFee] = useState<{ nativeFee: bigint; lzTokenFee: bigint } | null>(null);
@@ -317,8 +314,28 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
   const srcAddr = direction === 'AtoB' ? homeAddr : remoteAddr;
   const dstAddr = direction === 'AtoB' ? remoteAddr : homeAddr;
   const srcIsStark = isStarknet(srcChain);
+  const dstIsStark = isStarknet(dstChain);
+  // The recipient must match the destination chain's address format (felt on Stark, 0x…20-byte on EVM).
+  const defaultRecipient = dstIsStark ? (stark.address ?? '') : (evm.address ?? '');
+  // Use per-side detection (not the mode toggle) so each direction knows whether its source is an adapter.
+  const srcDetected = direction === 'AtoB' ? detectedHome : detectedRemote;
+  const srcIsAdapter = srcDetected === 'adapter';
+  // Auto-populate the Stark underlying token field only when the Stark source is itself an adapter.
+  // NB: evmUnderlyingToken is an EVM address unless home was Stark-adapter; using it for Stark would dial a non-existent contract.
+  useEffect(() => {
+    if (!srcIsStark || !srcIsAdapter) return;
+    if (starkTokenAddr) return;
+    (async () => {
+      try {
+        const rpc = (srcChain as StarknetChain).rpc;
+        const r = await cairo.detectCairoOFTType(srcAddr, rpc);
+        if (r.type === 'adapter' && r.tokenAddr) setStarkTokenAddr(r.tokenAddr);
+      } catch { /* best-effort */ }
+    })();
+  }, [srcIsStark, srcIsAdapter, srcAddr]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const needsApproval = isAdapter && direction === 'AtoB' && !srcIsStark;
+  // EVM: explicit approve step only for EVM adapter source. Stark: always need fee approve; underlying only if src is adapter.
+  const needsApproval = srcIsStark ? true : srcIsAdapter;
 
   function parseAmount(decimals: number): bigint {
     try {
@@ -340,7 +357,8 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
       const amountLD = parseAmount(decimals);
       const slip = Number(slippage) || 5;
       const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
-      const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
+      const recipientAddr = recipient || defaultRecipient;
+      if (!recipientAddr) { setQuoteTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a ${dstIsStark ? 'Starknet' : 'EVM'} recipient address.` }); return; }
       if (srcIsStark) {
         const starkData = starkChain(isTestnet);
         const fee = await cairo.cairoQuoteSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, starkData.rpc);
@@ -357,17 +375,23 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
   }
 
   async function handleApprove(): Promise<void> {
-    if (!srcIsStark && isAdapter && direction === 'AtoB') {
-      setApproveTx({ status: 'pending' });
-      try {
+    setApproveTx({ status: 'pending' });
+    const amountLD = parseAmount(decimals);
+    try {
+      if (srcIsStark) {
+        if (!quotedFee) { setApproveTx({ status: 'error', message: 'Quote the fee first — approval amount depends on the native fee.' }); return; }
+        const feeToken = starkFeeToken;
+        if (!feeToken) { setApproveTx({ status: 'error', message: 'Fee token address missing' }); return; }
+        const underlying = srcIsAdapter && starkTokenAddr ? starkTokenAddr : undefined;
+        setApproveTx(await cairo.cairoApprove(srcAddr, feeToken, quotedFee.nativeFee, underlying, amountLD));
+      } else if (srcIsAdapter) {
         const provider = evm.signer!;
         const c = new (await import('ethers')).Contract(srcAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
         const tokenAddr = await c.token() as string;
-        const amountLD = parseAmount(decimals);
         setApproveTx(await wiring.approveToken(tokenAddr, srcAddr, amountLD));
-      } catch (e) {
-        setApproveTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: srcAddr, functionName: 'approve', functionCall: `approve(${srcAddr}, ${parseAmount(decimals)})` }) });
       }
+    } catch (e) {
+      setApproveTx({ status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: srcAddr, functionName: 'approve', functionCall: `approve(${srcAddr}, ${amountLD})` }) });
     }
   }
 
@@ -376,13 +400,12 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
     const amountLD = parseAmount(decimals);
     const slip = Number(slippage) || 5;
     const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
-    const recipientAddr = recipient || (evm.address ?? stark.address ?? '');
+    const recipientAddr = recipient || defaultRecipient;
+    if (!recipientAddr) { setSendTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a ${dstIsStark ? 'Starknet' : 'EVM'} recipient address.` }); return; }
     setSendTx({ status: 'pending' });
     try {
       if (srcIsStark) {
-        const tokenAddr = isAdapter && starkTokenAddr ? starkTokenAddr : undefined;
-        const feeToken = starkFeeToken || undefined;
-        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee, tokenAddr, feeToken));
+        setSendTx(await cairo.cairoSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, quotedFee));
       } else {
         setSendTx(await wiring.evmSend(srcAddr, dstChain.eid, toBytes32(recipientAddr), amountLD, minAmountLD, quotedFee));
       }
@@ -402,11 +425,11 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
       {/* Direction toggle */}
       <div className="flex gap-2 mb-4">
         <button className={`tab-btn ${direction === 'AtoB' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('AtoB'); setQuotedFee(null); }}>
+          onClick={() => { setDirection('AtoB'); setQuotedFee(null); setRecipient(''); }}>
           {home.name} → {remote.name}
         </button>
         <button className={`tab-btn ${direction === 'BtoA' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('BtoA'); setQuotedFee(null); }}>
+          onClick={() => { setDirection('BtoA'); setQuotedFee(null); setRecipient(''); }}>
           {remote.name} → {home.name}
         </button>
       </div>
@@ -414,6 +437,23 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
       <div className="text-xs text-on-surface-variant mb-3">
         Source: <span className="text-on-surface font-mono">{srcAddr.slice(0, 10)}…</span> on {srcChain.name}
         {' → '}Destination: <span className="text-on-surface font-mono">{dstAddr.slice(0, 10)}…</span> on {dstChain.name}
+      </div>
+
+      {/* Balance summary (both sides) */}
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">Balances</div>
+        <button className="text-[10px] text-primary hover:underline bg-transparent border-none p-0 cursor-pointer"
+          onClick={() => setBalanceRefresh((n) => n + 1)} title="Refresh balances">
+          ↻ Refresh
+        </button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+        <SideBalance label={`${home.name} (${detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : '?'})`}
+          chain={home} oftAddr={homeAddr} detectedType={detectedHome}
+          evm={evm} stark={stark} cairo={cairo} starkFeeToken={starkFeeToken} refreshKey={balanceRefresh} />
+        <SideBalance label={`${remote.name} (${detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : '?'})`}
+          chain={remote} oftAddr={remoteAddr} detectedType={detectedRemote}
+          evm={evm} stark={stark} cairo={cairo} starkFeeToken={starkFeeToken} refreshKey={balanceRefresh} />
       </div>
 
       {/* Amount + recipient */}
@@ -432,8 +472,9 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
           <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" />
         </div>
         <div>
-          <div className="label">Recipient (leave empty = self)</div>
-          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder={evm.address ?? stark.address ?? '0x…'} spellCheck={false} />
+          <div className="label">Recipient on {dstChain.name} (leave empty = self)</div>
+          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)}
+            placeholder={defaultRecipient || (dstIsStark ? '0x… (Starknet felt)' : '0x… (EVM address)')} spellCheck={false} />
         </div>
       </div>
 
@@ -447,10 +488,10 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
             <div className="label">Fee token address (STRK default)</div>
             <input className="input" value={starkFeeToken} onChange={(e) => setStarkFeeToken(e.target.value)}
               placeholder="0x… STRK on Starknet" spellCheck={false} />
-            <div className="text-[11px] text-[var(--text-muted)] mt-1">Fee approval is bundled with the send tx.</div>
+            <div className="text-[11px] text-[var(--text-muted)] mt-1">Approve runs as a separate tx before Send.</div>
           </div>
         )}
-        {srcIsStark && isAdapter && (
+        {srcIsStark && srcIsAdapter && (
           <div>
             <div className="label">Underlying token address (adapter lockbox)</div>
             <input className="input" value={starkTokenAddr} onChange={(e) => setStarkTokenAddr(e.target.value)}
@@ -465,8 +506,10 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
           {quoting ? 'Quoting…' : 'Quote Fee'}
         </button>
         {needsApproval && (
-          <button className="btn" onClick={handleApprove} disabled={approveTx.status === 'pending' || !amount}>
-            {approveTx.status === 'pending' ? 'Approving…' : 'Approve'}
+          <button className="btn" onClick={handleApprove}
+            disabled={approveTx.status === 'pending' || !amount || (srcIsStark && !quotedFee)}
+            title={srcIsStark && !quotedFee ? 'Quote the fee first' : undefined}>
+            {approveTx.status === 'pending' ? 'Approving…' : srcIsStark ? (srcIsAdapter ? 'Approve Fee + Token' : 'Approve Fee') : 'Approve'}
           </button>
         )}
         <button className="btn btn-primary" onClick={handleSend}
@@ -497,6 +540,111 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, mode, evm, stark, wirin
         <TxStatus state={sendTx} showLzScan />
       </div>
     </Section>
+  );
+}
+
+// ── Side balance (token + native) ────────────────────────────────────────────
+
+function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, starkFeeToken, refreshKey }: {
+  label: string;
+  chain: AnyChain;
+  oftAddr: string;
+  detectedType: 'adapter' | 'oft' | null;
+  evm: ReturnType<typeof useEvmWallet>;
+  stark: ReturnType<typeof useStarknetWallet>;
+  cairo: ReturnType<typeof useCairoOFT>;
+  starkFeeToken: string;
+  refreshKey: number;
+}): JSX.Element {
+  const [state, setState] = useState<{ token: string; tokenSym: string; native: string; nativeSym: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    if (!isAddr(oftAddr)) { setState(null); return; }
+
+    (async () => {
+      try {
+        if (isEvm(chain)) {
+          if (!evm.address) { setState(null); return; }
+          const { Contract: C, JsonRpcProvider: P, Network, formatEther, formatUnits } = await import('ethers');
+          // Always use our own RPC for reads. The wallet's injected provider often points at rate-limited
+          // public endpoints (e.g. zan.top for Arb Sepolia) which 429 under load.
+          const net = Network.from(chain.chainId);
+          const provider = new P(chain.rpc, net, { staticNetwork: net });
+          let tokenAddr = oftAddr;
+          if (detectedType === 'adapter') {
+            const adapter = new C(oftAddr, (await import('@/abis/evm/OFTAdapter.json')).default, provider);
+            tokenAddr = await adapter.token() as string;
+          }
+          const erc20 = new C(tokenAddr, ['function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)', 'function symbol() view returns (string)'], provider);
+          const [dec, sym, bal, native] = await Promise.all([
+            erc20.decimals(),
+            erc20.symbol().catch(() => ''),
+            erc20.balanceOf(evm.address) as Promise<bigint>,
+            provider.getBalance(evm.address),
+          ]);
+          if (cancelled) return;
+          setState({
+            token: Number(formatUnits(bal, Number(dec))).toFixed(4),
+            tokenSym: (sym as string) || '',
+            native: Number(formatEther(native)).toFixed(4),
+            nativeSym: 'ETH',
+          });
+        } else {
+          if (!stark.address) { setState(null); return; }
+          const starkC = chain as StarknetChain;
+          let tokenAddr = oftAddr;
+          try {
+            const r = await cairo.detectCairoOFTType(oftAddr, starkC.rpc);
+            if (r.type === 'adapter' && r.tokenAddr) tokenAddr = r.tokenAddr;
+          } catch { /* */ }
+          const { RpcProvider: RP } = await import('starknet');
+          const p = new RP({ nodeUrl: starkC.rpc });
+          const decResult = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] }).catch(() => null);
+          const dec = decResult && decResult[0] ? Number(BigInt(decResult[0])) : 18;
+          const [tokenBalRaw, symInfo, nativeBalRaw] = await Promise.all([
+            cairo.cairoBalance(tokenAddr, stark.address, starkC.rpc),
+            cairo.readCairoTokenInfo(tokenAddr, starkC.rpc).catch(() => ({ symbol: '' })),
+            starkFeeToken ? cairo.cairoBalance(starkFeeToken, stark.address, starkC.rpc) : Promise.resolve(0n),
+          ]);
+          if (cancelled) return;
+          const fmt = (v: bigint, d: number): string => {
+            const whole = v / BigInt(10 ** d);
+            const frac = (v % BigInt(10 ** d)).toString().padStart(d, '0').slice(0, 4);
+            return `${whole}.${frac}`;
+          };
+          setState({
+            token: fmt(tokenBalRaw, dec),
+            tokenSym: symInfo.symbol || '',
+            native: fmt(nativeBalRaw, 18),
+            nativeSym: 'STRK',
+          });
+        }
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [chain, oftAddr, detectedType, evm.address, stark.address, evm.chainId, starkFeeToken, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="bg-surface-container rounded-lg px-3 py-2 border border-outline-variant/10">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-0.5">{label}</div>
+      {err ? (
+        <div className="text-[11px] text-error font-mono">err: {err.slice(0, 40)}</div>
+      ) : !state ? (
+        <div className="text-[11px] text-on-surface-variant font-mono">—</div>
+      ) : (
+        <div className="text-[12px] font-mono text-on-surface">
+          <span>{state.token}</span>{state.tokenSym && <span className="text-on-surface-variant"> {state.tokenSym}</span>}
+          <span className="text-on-surface-variant mx-2">·</span>
+          <span>{state.native}</span><span className="text-on-surface-variant"> {state.nativeSym}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,10 +1,42 @@
 import { useCallback } from 'react';
-import { RpcProvider, CallData, Contract } from 'starknet';
+import { RpcProvider, CallData, validateAndParseAddress } from 'starknet';
 import type { WalletAccount } from 'starknet';
 import type { TxState, PeerEntry } from '@/types';
 import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
-import StarknetOFTABI from '@/abis/svm/OFT.json';
-import StarknetOFTAdapterABI from '@/abis/svm/OFTAdapter.json';
+
+/**
+ * Normalize a Starknet address to its canonical 0x-prefixed 64-hex form.
+ * Required because some addresses are stored/passed without leading zeros and
+ * RPC calls (especially callContract) reject the short form on certain providers.
+ */
+function normalizeStarkAddr(addr: string): string {
+  try { return validateAndParseAddress(addr); } catch { return addr; }
+}
+
+/** Run a list of async tasks with bounded concurrency. Used to avoid hammering Stark RPCs. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      try { results[i] = { status: 'fulfilled', value: await fn(items[i], i) }; }
+      catch (reason) { results[i] = { status: 'rejected', reason }; }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** Try once, then retry once after a short delay if it throws. Catches transient RPC rate limits. */
+async function withRetry<T>(fn: () => Promise<T>, delayMs = 250): Promise<T> {
+  try { return await fn(); }
+  catch {
+    await new Promise((r) => setTimeout(r, delayMs));
+    return fn();
+  }
+}
 
 /** Convert an EVM address (0x hex) to the Bytes32 low/high calldata for Cairo set_peer. */
 function evmAddrToBytes32Calldata(evmAddr: string): [string, string] {
@@ -21,24 +53,23 @@ function encodeU256(value: bigint): [string, string] {
   return [low, high];
 }
 
-/** Read the peer bytes32 stored for a given EID from a Cairo OFT, returned as a hex string. */
+/**
+ * Read the peer bytes32 stored for a given EID from a Cairo OFT, returned as a hex string.
+ * Throws on RPC failure so callers (e.g. readAllPeers' retry layer) can distinguish "peer is zero"
+ * from "the call itself failed".
+ */
 async function readCairoPeer(cairoOftAddr: string, eid: number, rpc: string): Promise<string | null> {
-  try {
-    const provider = new RpcProvider({ nodeUrl: rpc });
-    const result = await provider.callContract({
-      contractAddress: cairoOftAddr,
-      entrypoint: 'get_peer',
-      calldata: CallData.compile([eid]),
-    });
-    // result is [low, high] for the Bytes32 value
-    const low  = BigInt(result[0]);
-    const high = BigInt(result[1]);
-    const value = (high << BigInt(128)) | low;
-    if (value === 0n) return null;
-    return '0x' + value.toString(16).padStart(64, '0');
-  } catch {
-    return null;
-  }
+  const provider = new RpcProvider({ nodeUrl: rpc });
+  const result = await provider.callContract({
+    contractAddress: normalizeStarkAddr(cairoOftAddr),
+    entrypoint: 'get_peer',
+    calldata: CallData.compile([eid]),
+  });
+  const low  = BigInt(result[0]);
+  const high = BigInt(result[1]);
+  const value = (high << BigInt(128)) | low;
+  if (value === 0n) return null;
+  return '0x' + value.toString(16).padStart(64, '0');
 }
 
 export interface CairoOFTState {
@@ -57,8 +88,10 @@ export interface CairoOFTOps {
   setPeer: (cairoOftAddr: string, evmEid: number, evmBridgeAddr: string) => Promise<TxState>;
   /** Quote the LZ fee for a Cairo OFT send */
   cairoQuoteSend: (cairoOftAddr: string, dstEid: number, toEvmAddr: string, amountLD: bigint, minAmountLD: bigint, rpc: string) => Promise<{ nativeFee: bigint; lzTokenFee: bigint }>;
-  /** Execute a cross-chain send from Cairo OFT */
-  cairoSend: (cairoOftAddr: string, dstEid: number, toEvmAddr: string, amountLD: bigint, minAmountLD: bigint, fee: { nativeFee: bigint; lzTokenFee: bigint }, underlyingTokenAddr?: string, feeTokenAddr?: string) => Promise<TxState>;
+  /** Approve fee token (ETH/STRK) and optionally the adapter's underlying ERC20, in a single multicall. */
+  cairoApprove: (cairoOftAddr: string, feeTokenAddr: string, nativeFee: bigint, underlyingTokenAddr?: string, amountLD?: bigint) => Promise<TxState>;
+  /** Execute a cross-chain send from Cairo OFT. Approvals must be done beforehand via cairoApprove. */
+  cairoSend: (cairoOftAddr: string, dstEid: number, toEvmAddr: string, amountLD: bigint, minAmountLD: bigint, fee: { nativeFee: bigint; lzTokenFee: bigint }) => Promise<TxState>;
   /** Read OFT balance for a Starknet account */
   cairoBalance: (cairoOftAddr: string, owner: string, rpc: string) => Promise<bigint>;
   readCairoTokenInfo: (addr: string, rpc: string) => Promise<{ name: string; symbol: string }>;
@@ -76,7 +109,9 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
   }, []);
 
   const readAllPeers = useCallback(async (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string): Promise<PeerEntry[]> => {
-    const settled = await Promise.allSettled(eidList.map((item) => readCairoPeer(cairoOftAddr, item.eid, rpc)));
+    // Bounded concurrency + retry — Stark RPCs throttle dozens of parallel callContract calls
+    // and previously dropped random entries from the result.
+    const settled = await mapLimit(eidList, 4, (item) => withRetry(() => readCairoPeer(cairoOftAddr, item.eid, rpc)));
     return eidList.map((item, i) => {
       const res = settled[i];
       if (res.status === 'rejected') return { ...item, peer: null, error: true };
@@ -88,7 +123,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     try {
       const provider = new RpcProvider({ nodeUrl: rpc });
       const result = await provider.callContract({
-        contractAddress: cairoOftAddr,
+        contractAddress: normalizeStarkAddr(cairoOftAddr),
         entrypoint: 'get_enforced_options',
         calldata: CallData.compile([evmEid, 1 /* MSG_TYPE_SEND */]),
       });
@@ -119,7 +154,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     try {
       const [low, high] = evmAddrToBytes32Calldata(evmBridgeAddr);
       const response = await account.execute([{
-        contractAddress: cairoOftAddr,
+        contractAddress: normalizeStarkAddr(cairoOftAddr),
         entrypoint: 'set_peer',
         calldata: [evmEid.toString(), low, high],
       }]);
@@ -163,7 +198,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     for (const provider of providers) {
       try {
         const result = await provider.callContract({
-          contractAddress: cairoOftAddr,
+          contractAddress: normalizeStarkAddr(cairoOftAddr),
           entrypoint: 'quote_send',
           calldata,
         });
@@ -178,6 +213,40 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     throw lastError;
   }, [account]);
 
+  const cairoApprove = useCallback(async (
+    cairoOftAddr: string,
+    feeTokenAddr: string,
+    nativeFee: bigint,
+    underlyingTokenAddr?: string,
+    amountLD?: bigint,
+  ): Promise<TxState> => {
+    if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
+    try {
+      const calls: Array<{ contractAddress: string; entrypoint: string; calldata: string[] }> = [];
+      const oft = normalizeStarkAddr(cairoOftAddr);
+      if (nativeFee > 0n) {
+        calls.push({
+          contractAddress: normalizeStarkAddr(feeTokenAddr),
+          entrypoint: 'approve',
+          calldata: [oft, ...encodeU256(nativeFee)],
+        });
+      }
+      if (underlyingTokenAddr && amountLD && amountLD > 0n) {
+        calls.push({
+          contractAddress: normalizeStarkAddr(underlyingTokenAddr),
+          entrypoint: 'approve',
+          calldata: [oft, ...encodeU256(amountLD)],
+        });
+      }
+      if (calls.length === 0) return { status: 'error', message: 'Nothing to approve' };
+      const response = await account.execute(calls);
+      await account.waitForTransaction(response.transaction_hash);
+      return { status: 'success', hash: response.transaction_hash };
+    } catch (e) {
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: feeTokenAddr, functionName: 'approve', functionCall: `approve(${cairoOftAddr}, fee=${nativeFee}${underlyingTokenAddr ? `, token=${underlyingTokenAddr}, amount=${amountLD}` : ''})` }) };
+    }
+  }, [account]);
+
   const cairoSend = useCallback(async (
     cairoOftAddr: string,
     dstEid: number,
@@ -185,18 +254,14 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     amountLD: bigint,
     minAmountLD: bigint,
     fee: { nativeFee: bigint; lzTokenFee: bigint },
-    /** If this is an OFT Adapter, pass the underlying ERC20 token address to batch approve + send. */
-    underlyingTokenAddr?: string,
-    /** Fee token address (ETH or STRK on Starknet). If provided, approve is bundled. */
-    feeTokenAddr?: string,
   ): Promise<TxState> => {
     if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
     try {
       const [toLow, toHigh] = evmAddrToBytes32Calldata(toEvmAddr);
       const emptyBA = ['0', '0x0', '0']; // empty ByteArray
 
-      const sendCall = {
-        contractAddress: cairoOftAddr,
+      const response = await account.execute([{
+        contractAddress: normalizeStarkAddr(cairoOftAddr),
         entrypoint: 'send',
         calldata: [
           dstEid.toString(),
@@ -208,33 +273,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
           ...encodeU256(fee.lzTokenFee),
           account.address,
         ],
-      };
-
-      // Build multicall: fee approval + optional token approval + send
-      const calls: Array<{ contractAddress: string; entrypoint: string; calldata: string[] }> = [];
-
-      // 1. Approve fee token (ETH/STRK) for the OFT to pay LZ messaging fee
-      if (feeTokenAddr && fee.nativeFee > 0n) {
-        calls.push({
-          contractAddress: feeTokenAddr,
-          entrypoint: 'approve',
-          calldata: [cairoOftAddr, ...encodeU256(fee.nativeFee)],
-        });
-      }
-
-      // 2. Approve underlying ERC20 token for adapter lockbox
-      if (underlyingTokenAddr) {
-        calls.push({
-          contractAddress: underlyingTokenAddr,
-          entrypoint: 'approve',
-          calldata: [cairoOftAddr, ...encodeU256(amountLD)],
-        });
-      }
-
-      // 3. Send
-      calls.push(sendCall);
-
-      const response = await account.execute(calls);
+      }]);
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
     } catch (e) {
@@ -243,22 +282,27 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
   }, [account]);
 
   const cairoBalance = useCallback(async (cairoOftAddr: string, owner: string, rpc: string): Promise<bigint> => {
+    // Raw callContract keeps parsing explicit and ABI-agnostic (works for any Cairo ERC20, not just the OFT ABI).
     const provider = new RpcProvider({ nodeUrl: rpc });
-    const contract = new Contract(StarknetOFTABI, cairoOftAddr, provider);
-    const result = await contract.balance_of(owner);
-    const low = BigInt(result.low ?? result[0] ?? '0');
-    const high = BigInt(result.high ?? result[1] ?? '0');
-    return low + (high << BigInt(128));
+    const result = await provider.callContract({
+      contractAddress: normalizeStarkAddr(cairoOftAddr),
+      entrypoint: 'balance_of',
+      calldata: CallData.compile([normalizeStarkAddr(owner)]),
+    });
+    const low  = BigInt(result[0] ?? '0');
+    const high = BigInt(result[1] ?? '0');
+    return low + (high << 128n);
   }, []);
 
   /** Read name + symbol from a Starknet contract (OFT or ERC20). Handles both felt252 and ByteArray returns. */
   const readCairoTokenInfo = useCallback(async (addr: string, rpc: string): Promise<{ name: string; symbol: string }> => {
     const provider = new RpcProvider({ nodeUrl: rpc });
     const fallback = { name: addr.slice(0, 10) + '…', symbol: '' };
+    const norm = normalizeStarkAddr(addr);
     try {
       const [nameResult, symbolResult] = await Promise.allSettled([
-        provider.callContract({ contractAddress: addr, entrypoint: 'name', calldata: [] }),
-        provider.callContract({ contractAddress: addr, entrypoint: 'symbol', calldata: [] }),
+        provider.callContract({ contractAddress: norm, entrypoint: 'name', calldata: [] }),
+        provider.callContract({ contractAddress: norm, entrypoint: 'symbol', calldata: [] }),
       ]);
 
       /**
@@ -319,19 +363,19 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
   const detectCairoOFTType = useCallback(async (addr: string, rpc: string): Promise<{ type: 'adapter' | 'oft'; tokenAddr: string | null }> => {
     const provider = new RpcProvider({ nodeUrl: rpc });
     try {
-      const result = await provider.callContract({ contractAddress: addr, entrypoint: 'token', calldata: [] });
+      const result = await provider.callContract({ contractAddress: normalizeStarkAddr(addr), entrypoint: 'token', calldata: [] });
       const tokenAddr = result[0];
       if (!tokenAddr || tokenAddr === '0x0') return { type: 'oft', tokenAddr: null };
       // If token() returns the contract's own address, it's an OFT; otherwise it's an adapter
       const selfNorm = BigInt(addr);
       const tokenNorm = BigInt(tokenAddr);
       if (selfNorm === tokenNorm) return { type: 'oft', tokenAddr: null };
-      return { type: 'adapter', tokenAddr };
+      return { type: 'adapter', tokenAddr: normalizeStarkAddr(tokenAddr) };
     } catch {
       // token() not found → it's a plain OFT without the adapter interface
       return { type: 'oft', tokenAddr: null };
     }
   }, []);
 
-  return { readPeer, readAllPeers, readEnforcedOptions, setPeer, cairoQuoteSend, cairoSend, cairoBalance, readCairoTokenInfo, detectCairoOFTType };
+  return { readPeer, readAllPeers, readEnforcedOptions, setPeer, cairoQuoteSend, cairoApprove, cairoSend, cairoBalance, readCairoTokenInfo, detectCairoOFTType };
 }

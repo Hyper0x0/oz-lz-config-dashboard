@@ -8,18 +8,36 @@ const API_KEY_STORAGE = 'ozlz_explorer_api_key';
 interface RpcOverrides {
   starknetMainnet: string;
   starknetSepolia: string;
+  /** chainId -> RPC URL. Lets users plug in their own Alchemy/Infura/etc. for any EVM chain. */
+  evmRpcs?: Record<number, string>;
 }
 
 function loadOverrides(): RpcOverrides {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as RpcOverrides;
+    if (raw) {
+      const parsed = JSON.parse(raw) as RpcOverrides;
+      return { starknetMainnet: parsed.starknetMainnet ?? '', starknetSepolia: parsed.starknetSepolia ?? '', evmRpcs: parsed.evmRpcs ?? {} };
+    }
   } catch { /* ignore */ }
-  return { starknetMainnet: '', starknetSepolia: '' };
+  return { starknetMainnet: '', starknetSepolia: '', evmRpcs: {} };
 }
 
 function saveOverrides(overrides: RpcOverrides): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
+}
+
+/** Resolver used outside React (e.g. inside useLZChains.fetchChains). */
+export function getEvmRpc(chainId: number, defaultRpc: string): string {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultRpc;
+    const parsed = JSON.parse(raw) as RpcOverrides;
+    const url = parsed.evmRpcs?.[chainId]?.trim();
+    return url || defaultRpc;
+  } catch {
+    return defaultRpc;
+  }
 }
 
 function loadApiKey(): string {
@@ -65,6 +83,8 @@ export function Settings(): JSX.Element {
   const [saved, setSaved] = useState(false);
   const [apiKey, setApiKey] = useState(loadApiKey);
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [evmRpcsText, setEvmRpcsText] = useState(() => JSON.stringify(loadOverrides().evmRpcs ?? {}, null, 2));
+  const [evmRpcsError, setEvmRpcsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!saved) return;
@@ -89,10 +109,33 @@ export function Settings(): JSX.Element {
   }
 
   function handleReset(): void {
-    const empty = { starknetMainnet: '', starknetSepolia: '' };
+    const empty: RpcOverrides = { starknetMainnet: '', starknetSepolia: '', evmRpcs: {} };
     setOverrides(empty);
+    setEvmRpcsText('{}');
+    setEvmRpcsError(null);
     saveOverrides(empty);
     setSaved(false);
+  }
+
+  function handleSaveEvmRpcs(): void {
+    try {
+      const parsed = JSON.parse(evmRpcsText) as Record<string, string>;
+      // Coerce keys to numbers and validate URLs.
+      const normalized: Record<number, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        const id = Number(k);
+        if (!Number.isInteger(id) || id <= 0) throw new Error(`Invalid chainId: ${k}`);
+        if (typeof v !== 'string' || !v.startsWith('http')) throw new Error(`Invalid RPC URL for chainId ${k}`);
+        normalized[id] = v.trim();
+      }
+      const next = { ...overrides, evmRpcs: normalized };
+      setOverrides(next);
+      saveOverrides(next);
+      setEvmRpcsError(null);
+      setSaved(true);
+    } catch (e) {
+      setEvmRpcsError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   function handleSaveApiKey(): void {
@@ -122,6 +165,25 @@ export function Settings(): JSX.Element {
           <button className="btn btn-primary" onClick={handleSave}>Save</button>
           <button className="btn" onClick={handleReset}>Reset to defaults</button>
           {saved && <span className="text-xs text-secondary">Saved — reload to apply</span>}
+        </div>
+      </Section>
+
+      <Section icon="bolt" title="EVM RPC Overrides" subtitle="Plug in your own RPC per chain (Alchemy, Infura, drpc, …) to bypass public-RPC rate limits.">
+        <p className="text-xs text-on-surface-variant mb-2">
+          JSON map of <code className="font-mono text-on-surface">chainId → URL</code>. Example:
+        </p>
+        <pre className="text-[11px] font-mono text-on-surface-variant bg-surface-container rounded p-2 mb-3 overflow-x-auto">{`{\n  "1": "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY",\n  "8453": "https://base-mainnet.g.alchemy.com/v2/YOUR_KEY",\n  "42161": "https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY",\n  "421614": "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"\n}`}</pre>
+        <textarea
+          className="input font-mono text-xs"
+          rows={8}
+          value={evmRpcsText}
+          onChange={(e) => { setEvmRpcsText(e.target.value); setEvmRpcsError(null); }}
+          spellCheck={false}
+        />
+        {evmRpcsError && <div className="text-xs text-error mt-1">{evmRpcsError}</div>}
+        <div className="flex gap-3 items-center mt-2">
+          <button className="btn btn-primary" onClick={handleSaveEvmRpcs}>Save EVM RPCs</button>
+          <span className="text-xs text-on-surface-variant">Reload after saving to apply.</span>
         </div>
       </Section>
 
