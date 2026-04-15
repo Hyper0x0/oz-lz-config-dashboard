@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { TxStatus } from '@/components/TxStatus';
+import { WalletChainHint } from '@/components/ChainSwitch';
 import { isStarknet } from '@/config/lzCatalog';
 import type { TxState } from '@/types';
 import type { StepProps } from '../types';
@@ -84,20 +85,18 @@ export function StepDelegate({ home, remote, hooks, verifyResult, onTxSuccess }:
 
 /** Shows network switch button or connected indicator */
 export function NetworkHint({ side }: { side: { kind: string; isConnected: boolean; needsNetworkSwitch: boolean; chainLabel: string; switchNetwork: () => void } }): JSX.Element {
-  if (side.kind === 'starknet') {
-    return side.isConnected
-      ? <div className="text-xs mb-1.5" style={{ color: 'var(--secondary)' }}>✓ Starknet connected</div>
-      : <div className="text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Connect Starknet wallet</div>;
-  }
   if (!side.isConnected) {
-    return <div className="text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>Connect EVM wallet</div>;
+    return <div className="text-xs mb-1.5 text-on-surface-variant">{side.kind === 'starknet' ? 'Connect Starknet wallet' : 'Connect EVM wallet'}</div>;
   }
-  if (side.needsNetworkSwitch) {
-    return (
-      <button className="btn btn-sm mb-1.5" onClick={side.switchNetwork}>
-        Switch to {side.chainLabel}
-      </button>
-    );
-  }
-  return <div className="text-xs mb-1.5" style={{ color: 'var(--secondary)' }}>✓ {side.chainLabel}</div>;
+  return (
+    <div className="mb-1.5">
+      <WalletChainHint
+        isConnected={side.isConnected}
+        isCorrectChain={!side.needsNetworkSwitch}
+        chainName={side.chainLabel}
+        onSwitch={side.switchNetwork}
+        variant={side.kind === 'starknet' ? 'starknet' : 'evm'}
+      />
+    </div>
+  );
 }

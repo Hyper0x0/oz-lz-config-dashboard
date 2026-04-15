@@ -5,7 +5,7 @@ import { useWallet } from '@/context/WalletContext';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
-import { ChainBadge } from '@/components/ChainBadge';
+import { SwitchChainButton } from '@/components/ChainSwitch';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
@@ -79,22 +79,23 @@ function computeHash(name: string): string {
 // ── Chain lists ─────────────────────────────────────────────────────────────
 
 const EVM_CHAINS = [
-  { id: 1,        name: 'Ethereum',        rpc: 'https://eth.llamarpc.com',                    explorer: 'etherscan.io' },
-  { id: 42161,    name: 'Arbitrum',         rpc: 'https://arb1.arbitrum.io/rpc',                explorer: 'arbiscan.io' },
-  { id: 421614,   name: 'Arbitrum Sepolia', rpc: 'https://arbitrum-sepolia.publicnode.com',     explorer: 'sepolia.arbiscan.io' },
-  { id: 10,       name: 'Optimism',         rpc: 'https://mainnet.optimism.io',                 explorer: 'optimistic.etherscan.io' },
-  { id: 8453,     name: 'Base',             rpc: 'https://mainnet.base.org',                    explorer: 'basescan.org' },
-  { id: 84532,    name: 'Base Sepolia',     rpc: 'https://sepolia.base.org',                    explorer: 'sepolia.basescan.org' },
-  { id: 137,      name: 'Polygon',          rpc: 'https://polygon-rpc.com',                     explorer: 'polygonscan.com' },
-  { id: 56,       name: 'BNB Chain',        rpc: 'https://bsc-dataseed.binance.org',            explorer: 'bscscan.com' },
-  { id: 43114,    name: 'Avalanche',        rpc: 'https://api.avax.network/ext/bc/C/rpc',       explorer: 'snowscan.xyz' },
-  { id: 11155111, name: 'Sepolia',          rpc: 'https://rpc.sepolia.org',                     explorer: 'sepolia.etherscan.io' },
+  { id: 1,        name: 'Ethereum',         rpc: 'https://eth.llamarpc.com',                    explorer: 'etherscan.io',             isTestnet: false },
+  { id: 42161,    name: 'Arbitrum',          rpc: 'https://arb1.arbitrum.io/rpc',                explorer: 'arbiscan.io',              isTestnet: false },
+  { id: 10,       name: 'Optimism',          rpc: 'https://mainnet.optimism.io',                 explorer: 'optimistic.etherscan.io',  isTestnet: false },
+  { id: 8453,     name: 'Base',              rpc: 'https://mainnet.base.org',                    explorer: 'basescan.org',             isTestnet: false },
+  { id: 137,      name: 'Polygon',           rpc: 'https://polygon-rpc.com',                     explorer: 'polygonscan.com',          isTestnet: false },
+  { id: 56,       name: 'BNB Chain',         rpc: 'https://bsc-dataseed.binance.org',            explorer: 'bscscan.com',              isTestnet: false },
+  { id: 43114,    name: 'Avalanche',         rpc: 'https://api.avax.network/ext/bc/C/rpc',       explorer: 'snowscan.xyz',             isTestnet: false },
+  { id: 11155111, name: 'Sepolia',           rpc: 'https://rpc.sepolia.org',                     explorer: 'sepolia.etherscan.io',     isTestnet: true },
+  { id: 421614,   name: 'Arbitrum Sepolia',  rpc: 'https://arbitrum-sepolia.publicnode.com',     explorer: 'sepolia.arbiscan.io',      isTestnet: true },
+  { id: 11155420, name: 'Optimism Sepolia',  rpc: 'https://sepolia.optimism.io',                 explorer: 'sepolia-optimism.etherscan.io', isTestnet: true },
+  { id: 84532,    name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',                    explorer: 'sepolia.basescan.org',     isTestnet: true },
 ];
 
-const STARK_CHAINS = [
-  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
-  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
-];
+const STARK_CHAINS: Record<'mainnet' | 'testnet', { id: string; name: string; rpc: string; explorer: string }> = {
+  mainnet: { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
+  testnet: { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
+};
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -108,20 +109,19 @@ export function Roles(): JSX.Element {
   // Chain type toggle
   const [chainType, setChainType] = useState<ChainType>('evm');
 
-  // EVM chain: auto-detect from wallet, with manual override
-  const walletChain = EVM_CHAINS.find((c) => c.id === evm.chainId);
-  const [manualChainId, setManualChainId] = useState<number | null>(null);
-  const activeChainId = manualChainId ?? evm.chainId ?? 421614;
-  const evmChain = EVM_CHAINS.find((c) => c.id === activeChainId) ?? EVM_CHAINS[2];
+  // Testnet/Mainnet toggle — filters EVM chains and auto-sets Starknet chain
+  const [isTestnet, setIsTestnet] = useState(true);
+  const filteredChains = EVM_CHAINS.filter((c) => c.isTestnet === isTestnet);
+  const starkChain = isTestnet ? STARK_CHAINS.testnet : STARK_CHAINS.mainnet;
 
-  // Starknet chain
-  const [starkChainId, setStarkChainId] = useState<string>('SN_SEPOLIA');
-  const starkChain = STARK_CHAINS.find((c) => c.id === starkChainId) ?? STARK_CHAINS[1];
-
-  // Sync manual override when wallet changes
-  useEffect(() => {
-    if (evm.chainId && !manualChainId) { /* auto-follow wallet */ }
-  }, [evm.chainId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // EVM chain selection
+  const [activeChainId, setActiveChainId] = useState<number>(421614);
+  function handleNetworkToggle(testnet: boolean) {
+    setIsTestnet(testnet);
+    const first = EVM_CHAINS.find((c) => c.isTestnet === testnet);
+    if (first) setActiveChainId(first.id);
+  }
+  const evmChain = filteredChains.find((c) => c.id === activeChainId) ?? filteredChains[0];
 
   const [contractAddr, setContractAddr] = useState('');
   const [presetKey, setPresetKey] = useState<string>('TimelockController');
@@ -187,9 +187,9 @@ export function Roles(): JSX.Element {
   }, [chainType]);
 
   const getEvmProvider = useCallback(() => {
-    if (evm.provider && evm.chainId === activeChainId) return evm.provider;
+    if (evm.provider && evm.chainId === evmChain.id) return evm.provider;
     return new JsonRpcProvider(evmChain.rpc);
-  }, [evm.provider, evm.chainId, activeChainId, evmChain.rpc]);
+  }, [evm.provider, evm.chainId, evmChain.id, evmChain.rpc]);
 
   // ── EVM Check ─────────────────────────────────────────────────────────
   async function handleEvmCheck(): Promise<void> {
@@ -433,7 +433,7 @@ export function Roles(): JSX.Element {
 
   const walletAddr = chainType === 'starknet' ? stark.address : evm.address;
   const isAdmin = myRoles.get(ZERO_HASH) === true;
-  const wrongChain = chainType === 'evm' && evm.isConnected && evm.chainId !== activeChainId;
+  const wrongChain = chainType === 'evm' && evm.isConnected && evm.chainId !== evmChain.id;
   const explorer = chainType === 'starknet' ? starkChain.explorer : evmChain.explorer;
 
   // Group holders by role
@@ -520,45 +520,38 @@ export function Roles(): JSX.Element {
     <>
       {/* Contract setup */}
       <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract">
-        {/* Chain type toggle + chain selector */}
+        {/* Chain type toggle + network mode */}
         <div className="flex gap-2 items-center mb-4 flex-wrap">
           <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
             onClick={() => setChainType('evm')}>EVM</button>
           <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
             onClick={() => setChainType('starknet')}>Starknet</button>
 
-          {chainType === 'evm' ? (
+          <span className="w-px h-5 bg-outline-variant/20 mx-1" />
+
+          <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+            onClick={() => handleNetworkToggle(true)}>Testnet</button>
+          <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+            onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+
+          {chainType === 'evm' && (
             <div className="ml-auto flex items-center gap-2">
-              {evm.isConnected && walletChain && !manualChainId && (
-                <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
-              )}
-              <select className="input text-xs w-44" value={activeChainId}
-                onChange={(e) => setManualChainId(Number(e.target.value))}>
-                {EVM_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <select className="input text-xs w-44" value={evmChain.id}
+                onChange={(e) => setActiveChainId(Number(e.target.value))}>
+                {filteredChains.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              {manualChainId && (
-                <button className="btn btn-sm" onClick={() => setManualChainId(null)}>Auto</button>
+              {wrongChain && (
+                <SwitchChainButton chainName={evmChain.name} onSwitch={() => evm.switchNetwork(evmChain.id)} />
               )}
             </div>
-          ) : (
+          )}
+          {chainType === 'starknet' && (
             <div className="ml-auto flex items-center gap-2">
-              {stark.address && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet</span>}
-              <select className="input text-xs w-44" value={starkChainId}
-                onChange={(e) => setStarkChainId(e.target.value)}>
-                {STARK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <span className="text-xs text-on-surface-variant">{starkChain.name}</span>
+              {stark.isConnected && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Connected</span>}
             </div>
           )}
         </div>
-
-        {/* Wrong chain warning (EVM only) */}
-        {wrongChain && (
-          <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
-            <span>Wallet is on {EVM_CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, but selected network is {evmChain.name}.</span>
-            <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet</button>
-            <button className="btn btn-sm" onClick={() => setManualChainId(evm.chainId ?? null)}>Use wallet chain</button>
-          </div>
-        )}
 
         {/* Contract address + preset */}
         <div className="flex gap-3 items-end flex-wrap">
@@ -598,7 +591,7 @@ export function Roles(): JSX.Element {
                       disabled={renounceTx.status === 'pending'}>Renounce</button>
                   )}
                   {has && wrongChain && (
-                    <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch to {evmChain.name}</button>
+                    <SwitchChainButton chainName={evmChain.name} onSwitch={() => evm.switchNetwork(evmChain.id)} />
                   )}
                 </div>
               );
@@ -626,7 +619,7 @@ export function Roles(): JSX.Element {
               <input className="input" value={grantAddr} onChange={(e) => setGrantAddr(e.target.value)} placeholder="0x…" spellCheck={false} />
             </div>
             {wrongChain ? (
-              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch to {evmChain.name}</button>
+              <SwitchChainButton chainName={evmChain.name} onSwitch={() => evm.switchNetwork(evmChain.id)} />
             ) : (
               <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
                 disabled={!grantRoleHash || !grantAddr || grantTx.status === 'pending'}

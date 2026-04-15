@@ -6,7 +6,7 @@ import { useCairoOFT } from '@/hooks/useCairoOFT';
 import { useEvmWallet } from '@/hooks/useEvmWallet';
 import { useStarknetWallet } from '@/hooks/useStarknetWallet';
 import { TxStatus } from '@/components/TxStatus';
-import { Section } from '@/components/Section';
+import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CONTRACTS, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import type { AnyChain, LZChain, StarknetChain } from '@/config/lzCatalog';
 import { isStarknet, isEvm } from '@/config/lzCatalog';
@@ -75,7 +75,6 @@ export function OFTs(): JSX.Element {
     setDetecting(true);
     detectTimer.current = setTimeout(async () => {
       try {
-        // Detect home
         if (evmHome && homeValid) {
           const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
           const t = await wiring.detectOFTType(homeAddr, evmHome.rpc, wp, evmHome.chainId).catch(() => null);
@@ -88,7 +87,6 @@ export function OFTs(): JSX.Element {
             if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr);
           }
         }
-        // Detect remote
         if (evmRemote && remoteValid) {
           const rwp = evm.provider && evm.chainId === evmRemote.chainId ? evm.provider : undefined;
           const t = await wiring.detectOFTType(remoteAddr, evmRemote.rpc, rwp, evmRemote.chainId).catch(() => null);
@@ -115,7 +113,6 @@ export function OFTs(): JSX.Element {
         if (evmHome) {
           const { Contract: C, JsonRpcProvider: P } = await import('ethers');
           const p = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : new P(evmHome.rpc);
-          // For adapters, read from underlying token; for OFTs, from the OFT itself
           let tokenAddr = homeAddr;
           if (detectedHome === 'adapter') {
             const c = new C(homeAddr, (await import('@/abis/evm/OFTAdapter.json')).default, p);
@@ -134,7 +131,6 @@ export function OFTs(): JSX.Element {
             setWalletBalance(`${whole}.${frac}`);
           }
         } else if (starkHome) {
-          // Try to read decimals from Cairo OFT (default 18 if unavailable)
           let dec = 18;
           let tokenAddr = homeAddr;
           try {
@@ -142,7 +138,7 @@ export function OFTs(): JSX.Element {
             if (detect.type === 'adapter' && detect.tokenAddr) tokenAddr = detect.tokenAddr;
           } catch { /* */ }
           try {
-            const { RpcProvider: RP, Contract: SC } = await import('starknet');
+            const { RpcProvider: RP } = await import('starknet');
             const p = new RP({ nodeUrl: starkHome.rpc });
             const result = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] });
             if (result[0]) dec = Number(BigInt(result[0]));
@@ -154,7 +150,6 @@ export function OFTs(): JSX.Element {
             const frac = (bal % BigInt(10 ** dec)).toString().padStart(dec, '0').slice(0, 4);
             setWalletBalance(`${whole}.${frac}`);
           }
-          // Try to read token symbol from Cairo
           try {
             const info = await cairo.readCairoTokenInfo(tokenAddr, starkHome.rpc);
             if (info.symbol) setTokenSymbol(info.symbol);
@@ -164,117 +159,129 @@ export function OFTs(): JSX.Element {
     })();
   }, [homeAddr, detectedHome, detecting, evm.address, stark.address, evmHome?.rpc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const homeLabel = detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : (mode === 'bridge-oft' ? 'Adapter' : 'OFT');
-  const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
-
   function handleNetworkToggle(testnet: boolean) {
     setIsTestnet(testnet);
     setHomeChain(null);
     setRemoteChain(null);
   }
 
-  return (
-    <div className="space-y-6">
+  function handleSwap() {
+    setHomeChain(remoteChain ?? remote);
+    setRemoteChain(homeChain ?? home);
+    const tmp = homeAddr;
+    setHomeAddr(remoteAddr);
+    setRemoteAddr(tmp);
+  }
 
-      {/* Pathway + Network bar */}
-      <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-        <div className="flex gap-2 items-center mb-4 flex-wrap">
+  const homeLabel = detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : (mode === 'bridge-oft' ? 'Adapter' : 'OFT');
+  const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
+
+  return (
+    <div className="max-w-xl mx-auto space-y-5">
+
+      {/* Network + Type bar */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-2 items-center">
           <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
             onClick={() => handleNetworkToggle(true)}>Testnet</button>
           <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
             onClick={() => handleNetworkToggle(false)}>Mainnet</button>
-          {chainsLoading && <span className="text-xs text-on-surface-variant">Loading chains…</span>}
-          <div className="ml-auto flex gap-2 items-center">
-            {detecting && <span className="text-[11px] text-on-surface-variant animate-pulse">Detecting type…</span>}
-            {!detecting && (detectedHome || detectedRemote) && (
-              <div className="flex gap-1.5 items-center">
-                {detectedHome && (
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
-                    Source: {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
-                  </span>
-                )}
-                {detectedRemote && (
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${detectedRemote === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
-                    Dest: {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
-                  </span>
-                )}
-              </div>
-            )}
-            {!detecting && !detectedHome && !detectedRemote && (
-              <>
-                <span className="text-xs text-on-surface-variant">Type:</span>
-                <button
-                  className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'bridge-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
-                  onClick={() => setMode('bridge-oft')}>Adapter</button>
-                <button
-                  className={`px-3 py-1 rounded text-xs font-headline font-bold border transition-colors ${mode === 'oft-oft' ? 'bg-primary/15 text-primary border-primary/30' : 'bg-surface-container text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
-                  onClick={() => setMode('oft-oft')}>OFT</button>
-              </>
-            )}
-          </div>
+          {chainsLoading && <span className="text-xs text-on-surface-variant animate-pulse">Loading...</span>}
         </div>
 
-        {/* Chain selectors + addresses — compact 2-row grid */}
-        <div className="flex gap-3 items-end">
-          <div className="flex-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} (src) — EID {home.eid}</div>
-            <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
-              disabledEid={remote.eid}
-              onSelect={(c) => { setHomeChain(c); }} />
-          </div>
-          <button className="btn btn-sm mb-0.5 flex-shrink-0" title="Swap"
-            onClick={() => {
-              setHomeChain(remoteChain ?? remote);
-              setRemoteChain(homeChain ?? home);
-              const tmp = homeAddr;
-              setHomeAddr(remoteAddr);
-              setRemoteAddr(tmp);
-            }}>⇄</button>
-          <div className="flex-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} (dest) — EID {remote.eid}</div>
-            <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
-              disabledEid={home.eid}
-              onSelect={(c) => { setRemoteChain(c); }} />
-          </div>
+        <div className="flex gap-1.5 items-center">
+          {detecting && <span className="text-[11px] text-on-surface-variant animate-pulse">Detecting...</span>}
+          {!detecting && (detectedHome || detectedRemote) && (
+            <>
+              {detectedHome && (
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border ${detectedHome === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                  {detectedHome === 'adapter' ? 'Adapter' : 'OFT'}
+                </span>
+              )}
+              {detectedRemote && (
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border ${detectedRemote === 'adapter' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-secondary/10 text-secondary border-secondary/20'}`}>
+                  {detectedRemote === 'adapter' ? 'Adapter' : 'OFT'}
+                </span>
+              )}
+            </>
+          )}
+          {!detecting && !detectedHome && !detectedRemote && (
+            <div className="flex gap-1.5">
+              <button className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${mode === 'bridge-oft' ? 'bg-primary/10 text-primary border-primary/25' : 'bg-transparent text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                onClick={() => setMode('bridge-oft')}>Adapter</button>
+              <button className={`px-3 py-1 rounded-md text-xs font-semibold border transition-colors ${mode === 'oft-oft' ? 'bg-primary/10 text-primary border-primary/25' : 'bg-transparent text-on-surface-variant border-outline-variant/20 hover:text-on-surface'}`}
+                onClick={() => setMode('oft-oft')}>OFT</button>
+            </div>
+          )}
         </div>
-        <div className="flex gap-3 items-end mt-2">
-          <div className="flex-1">
-            <input className="input" value={homeAddr} onChange={(e) => setHomeAddr(e.target.value)} spellCheck={false} placeholder={`${homeLabel} address`} />
-          </div>
-          <div className="w-[34px] flex-shrink-0" />
-          <div className="flex-1">
-            <input className="input" value={remoteAddr} onChange={(e) => setRemoteAddr(e.target.value)} spellCheck={false} placeholder={`${remoteLabel} address`} />
-          </div>
+      </div>
+
+      {/* ── Single Swap Card ── */}
+      <div className="swap-card">
+
+        {/* Source panel */}
+        <div className="swap-panel rounded-t-[var(--radius-2xl)]">
+          <div className="swap-panel-label">From ({homeLabel})</div>
+          <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
+            disabledEid={remote.eid}
+            onSelect={(c) => setHomeChain(c)} />
+          <input className="input text-sm mt-3" value={homeAddr} onChange={(e) => setHomeAddr(e.target.value)} spellCheck={false}
+            placeholder="Contract address" />
+          {walletBalance && (
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[12px] text-on-surface-variant">Balance</span>
+              <span className="text-[12px] text-on-surface font-mono">
+                {walletBalance}{tokenSymbol ? ` ${tokenSymbol}` : ''}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Wallet hints + switch chain */}
-        <div className="flex items-center gap-3 mt-3 flex-wrap">
+        {/* Swap divider */}
+        <div className="swap-divider">
+          <button className="swap-divider-btn" onClick={handleSwap} title="Swap direction">
+            <span className="material-symbols-outlined text-lg">swap_vert</span>
+          </button>
+        </div>
+
+        {/* Destination panel */}
+        <div className="swap-panel border-t border-[var(--border)]">
+          <div className="swap-panel-label">To ({remoteLabel})</div>
+          <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
+            disabledEid={home.eid}
+            onSelect={(c) => setRemoteChain(c)} />
+          <input className="input text-sm mt-3" value={remoteAddr} onChange={(e) => setRemoteAddr(e.target.value)} spellCheck={false}
+            placeholder="Contract address" />
+        </div>
+
+        {/* Wallet status bar */}
+        <div className="px-5 py-2.5 border-t border-[var(--border)] flex items-center gap-3 flex-wrap text-xs">
           {(() => {
             const evmSide = evmHome ?? evmRemote;
             if (!evmSide || !evm.isConnected) return null;
             return evm.chainId === evmSide.chainId
-              ? <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmSide.name}</span>
-              : <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmSide.chainId)}>Switch wallet to {evmSide.name}</button>;
+              ? <span className="flex items-center gap-1.5 text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>{evmSide.name}</span>
+              : <SwitchChainButton chainName={evmSide.name} onSwitch={() => evm.switchNetwork(evmSide.chainId)} />;
           })()}
           {hasStarknet && stark.isConnected && (
-            <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet connected</span>
+            <span className="flex items-center gap-1.5 text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet</span>
           )}
         </div>
-      </section>
 
-      {/* Send Panel */}
-      <SendPanel
-        home={home} remote={remote}
-        homeAddr={homeAddr} remoteAddr={remoteAddr}
-        evm={evm} stark={stark}
-        wiring={wiring} cairo={cairo}
-        isTestnet={isTestnet}
-        detectedHome={detectedHome}
-        detectedRemote={detectedRemote}
-        decimals={decimals}
-        walletBalance={walletBalance}
-        tokenSymbol={tokenSymbol}
-      />
+        {/* ── Send section (inside same card) ── */}
+        <SendPanel
+          home={home} remote={remote}
+          homeAddr={homeAddr} remoteAddr={remoteAddr}
+          evm={evm} stark={stark}
+          wiring={wiring} cairo={cairo}
+          isTestnet={isTestnet}
+          detectedHome={detectedHome}
+          detectedRemote={detectedRemote}
+          decimals={decimals}
+          walletBalance={walletBalance}
+          tokenSymbol={tokenSymbol}
+        />
+      </div>
     </div>
   );
 }
@@ -315,13 +322,10 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
   const dstAddr = direction === 'AtoB' ? remoteAddr : homeAddr;
   const srcIsStark = isStarknet(srcChain);
   const dstIsStark = isStarknet(dstChain);
-  // The recipient must match the destination chain's address format (felt on Stark, 0x…20-byte on EVM).
   const defaultRecipient = dstIsStark ? (stark.address ?? '') : (evm.address ?? '');
-  // Use per-side detection (not the mode toggle) so each direction knows whether its source is an adapter.
   const srcDetected = direction === 'AtoB' ? detectedHome : detectedRemote;
   const srcIsAdapter = srcDetected === 'adapter';
-  // Auto-populate the Stark underlying token field only when the Stark source is itself an adapter.
-  // NB: evmUnderlyingToken is an EVM address unless home was Stark-adapter; using it for Stark would dial a non-existent contract.
+
   useEffect(() => {
     if (!srcIsStark || !srcIsAdapter) return;
     if (starkTokenAddr) return;
@@ -334,8 +338,19 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
     })();
   }, [srcIsStark, srcIsAdapter, srcAddr]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // EVM: explicit approve step only for EVM adapter source. Stark: always need fee approve; underlying only if src is adapter.
   const needsApproval = srcIsStark ? true : srcIsAdapter;
+
+  // Auto-quote when amount changes (debounced)
+  const quoteTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    setQuotedFee(null);
+    if (!amount || !srcAddr || Number(amount) <= 0) return;
+    clearTimeout(quoteTimer.current);
+    quoteTimer.current = setTimeout(() => {
+      handleQuote();
+    }, 1200);
+    return () => clearTimeout(quoteTimer.current);
+  }, [amount, srcAddr, srcChain.eid, dstChain.eid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function parseAmount(decimals: number): bigint {
     try {
@@ -358,7 +373,7 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
       const slip = Number(slippage) || 5;
       const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
       const recipientAddr = recipient || defaultRecipient;
-      if (!recipientAddr) { setQuoteTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a ${dstIsStark ? 'Starknet' : 'EVM'} recipient address.` }); return; }
+      if (!recipientAddr) { setQuoteTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a recipient address.` }); return; }
       if (srcIsStark) {
         const starkData = starkChain(isTestnet);
         const fee = await cairo.cairoQuoteSend(srcAddr, dstChain.eid, recipientAddr, amountLD, minAmountLD, starkData.rpc);
@@ -379,7 +394,7 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
     const amountLD = parseAmount(decimals);
     try {
       if (srcIsStark) {
-        if (!quotedFee) { setApproveTx({ status: 'error', message: 'Quote the fee first — approval amount depends on the native fee.' }); return; }
+        if (!quotedFee) { setApproveTx({ status: 'error', message: 'Quote the fee first.' }); return; }
         const feeToken = starkFeeToken;
         if (!feeToken) { setApproveTx({ status: 'error', message: 'Fee token address missing' }); return; }
         const underlying = srcIsAdapter && starkTokenAddr ? starkTokenAddr : undefined;
@@ -401,7 +416,7 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
     const slip = Number(slippage) || 5;
     const minAmountLD = amountLD * BigInt(100 - slip) / 100n;
     const recipientAddr = recipient || defaultRecipient;
-    if (!recipientAddr) { setSendTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a ${dstIsStark ? 'Starknet' : 'EVM'} recipient address.` }); return; }
+    if (!recipientAddr) { setSendTx({ status: 'error', message: `Connect your ${dstIsStark ? 'Starknet' : 'EVM'} wallet or enter a recipient address.` }); return; }
     setSendTx({ status: 'pending' });
     try {
       if (srcIsStark) {
@@ -421,129 +436,119 @@ function SendPanel({ home, remote, homeAddr, remoteAddr, evm, stark, wiring, cai
   const srcConnected = srcIsStark ? stark.address !== null : (evm.isConnected && evm.chainId === (srcChain as LZChain).chainId);
 
   return (
-    <Section icon="send" title="Send Tokens" subtitle={`${srcChain.name} → ${dstChain.name}`}>
-      {/* Direction toggle */}
-      <div className="flex gap-2 mb-4">
-        <button className={`tab-btn ${direction === 'AtoB' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('AtoB'); setQuotedFee(null); setRecipient(''); }}>
-          {home.name} → {remote.name}
-        </button>
-        <button className={`tab-btn ${direction === 'BtoA' ? 'tab-btn-active' : ''}`}
-          onClick={() => { setDirection('BtoA'); setQuotedFee(null); setRecipient(''); }}>
-          {remote.name} → {home.name}
-        </button>
+    <div className="border-t border-[var(--border)]">
+      {/* Send header */}
+      <div className="px-5 pt-4 pb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-semibold text-on-surface">Send</span>
+          <span className="text-[12px] text-on-surface-variant">{srcChain.name} &rarr; {dstChain.name}</span>
+        </div>
       </div>
 
-      <div className="text-xs text-on-surface-variant mb-3">
-        Source: <span className="text-on-surface font-mono">{srcAddr.slice(0, 10)}…</span> on {srcChain.name}
-        {' → '}Destination: <span className="text-on-surface font-mono">{dstAddr.slice(0, 10)}…</span> on {dstChain.name}
-      </div>
-
-      {/* Balance summary (both sides) */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">Balances</div>
-        <button className="text-[10px] text-primary hover:underline bg-transparent border-none p-0 cursor-pointer"
-          onClick={() => setBalanceRefresh((n) => n + 1)} title="Refresh balances">
-          ↻ Refresh
-        </button>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-        <SideBalance label={`${home.name} (${detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : '?'})`}
-          chain={home} oftAddr={homeAddr} detectedType={detectedHome}
-          evm={evm} stark={stark} cairo={cairo} starkFeeToken={starkFeeToken} refreshKey={balanceRefresh} />
-        <SideBalance label={`${remote.name} (${detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : '?'})`}
-          chain={remote} oftAddr={remoteAddr} detectedType={detectedRemote}
-          evm={evm} stark={stark} cairo={cairo} starkFeeToken={starkFeeToken} refreshKey={balanceRefresh} />
-      </div>
-
-      {/* Amount + recipient */}
-      <div className="form-grid mb-3">
+      {/* Amount + options */}
+      <div className="px-5 pb-5 space-y-3">
+        {/* Amount */}
         <div>
-          <div className="flex items-center gap-2">
-            <div className="label mb-0">Amount{tokenSymbol ? ` (${tokenSymbol})` : ''}</div>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="label mb-0">Amount{tokenSymbol ? ` (${tokenSymbol})` : ''}</span>
             {walletBalance && (
-              <button className="text-[10px] text-primary hover:underline cursor-pointer bg-transparent border-none p-0"
+              <button className="text-[11px] text-primary hover:underline cursor-pointer bg-transparent border-none p-0 font-mono"
                 onClick={() => setAmount(walletBalance)}>
-                Balance: {walletBalance}{tokenSymbol ? ` ${tokenSymbol}` : ''}
+                Max: {walletBalance}
               </button>
             )}
-            {decimals !== 18 && <span className="text-[10px] text-on-surface-variant">({decimals} dec)</span>}
           </div>
           <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.0" />
         </div>
-        <div>
-          <div className="label">Recipient on {dstChain.name} (leave empty = self)</div>
-          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)}
-            placeholder={defaultRecipient || (dstIsStark ? '0x… (Starknet felt)' : '0x… (EVM address)')} spellCheck={false} />
-        </div>
-      </div>
 
-      <div className="form-grid mb-3">
+        {/* Recipient */}
         <div>
-          <div className="label">Slippage tolerance (%)</div>
-          <input className="input w-[80px]" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+          <span className="label">Recipient on {dstChain.name} <span className="text-on-surface-variant/50 font-normal">(leave empty = self)</span></span>
+          <input className="input" value={recipient} onChange={(e) => setRecipient(e.target.value)}
+            placeholder={defaultRecipient || (dstIsStark ? '0x... (Starknet)' : '0x... (EVM)')} spellCheck={false} />
         </div>
+
+        {/* Slippage */}
+        <div className="flex gap-3">
+          <div className="w-24">
+            <span className="label">Slippage %</span>
+            <input className="input" value={slippage} onChange={(e) => setSlippage(e.target.value)} />
+          </div>
+          {decimals !== 18 && <div className="flex items-end pb-1"><span className="text-[11px] text-on-surface-variant">{decimals} decimals</span></div>}
+        </div>
+
+        {/* Starknet extras */}
         {srcIsStark && (
           <div>
-            <div className="label">Fee token address (STRK default)</div>
-            <input className="input" value={starkFeeToken} onChange={(e) => setStarkFeeToken(e.target.value)}
-              placeholder="0x… STRK on Starknet" spellCheck={false} />
-            <div className="text-[11px] text-[var(--text-muted)] mt-1">Approve runs as a separate tx before Send.</div>
+            <span className="label">Fee token (STRK)</span>
+            <input className="input text-xs font-mono" value={starkFeeToken} onChange={(e) => setStarkFeeToken(e.target.value)}
+              placeholder="0x... STRK on Starknet" spellCheck={false} />
           </div>
         )}
         {srcIsStark && srcIsAdapter && (
           <div>
-            <div className="label">Underlying token address (adapter lockbox)</div>
-            <input className="input" value={starkTokenAddr} onChange={(e) => setStarkTokenAddr(e.target.value)}
-              placeholder="0x… (required for adapter approval)" spellCheck={false} />
+            <span className="label">Underlying token (adapter lockbox)</span>
+            <input className="input text-xs font-mono" value={starkTokenAddr} onChange={(e) => setStarkTokenAddr(e.target.value)}
+              placeholder="0x... (required for adapter approval)" spellCheck={false} />
           </div>
         )}
-      </div>
 
-      {/* Actions */}
-      <div className="flex gap-2 items-center flex-wrap">
-        <button className="btn" onClick={handleQuote} disabled={quoting || !amount || !srcAddr}>
-          {quoting ? 'Quoting…' : 'Quote Fee'}
-        </button>
-        {needsApproval && (
-          <button className="btn" onClick={handleApprove}
-            disabled={approveTx.status === 'pending' || !amount || (srcIsStark && !quotedFee)}
-            title={srcIsStark && !quotedFee ? 'Quote the fee first' : undefined}>
-            {approveTx.status === 'pending' ? 'Approving…' : srcIsStark ? (srcIsAdapter ? 'Approve Fee + Token' : 'Approve Fee') : 'Approve'}
-          </button>
-        )}
-        <button className="btn btn-primary" onClick={handleSend}
-          disabled={!quotedFee || sendTx.status === 'pending' || !srcConnected}>
-          {sendTx.status === 'pending' ? 'Sending…' : 'Send'}
-        </button>
-        {!srcConnected && !srcIsStark && evm.isConnected && (
-          <button className="btn btn-sm" onClick={() => evm.switchNetwork((srcChain as LZChain).chainId)}>
-            Switch to {srcChain.name}
-          </button>
-        )}
-      </div>
-
-      {/* Status */}
-      {quoteTx.status === 'error' && <div className="mt-2"><TxStatus state={quoteTx} /></div>}
-      {quotedFee && (
-        <div className="bg-surface-container rounded-lg p-3 mt-3 border border-outline-variant/10">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Quoted fee</div>
-          <div className="text-sm text-on-surface font-mono">
-            {(Number(quotedFee.nativeFee) / 1e18).toFixed(6)} native
-            {quotedFee.lzTokenFee > 0n && ` + ${(Number(quotedFee.lzTokenFee) / 1e18).toFixed(6)} LZ token`}
+        {/* Quoted fee */}
+        {quotedFee && (
+          <div className="bg-[var(--bg)] rounded-xl p-3 border border-[var(--border)]">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] text-on-surface-variant">Estimated fee</span>
+              <span className="text-[13px] text-on-surface font-mono">
+                {(Number(quotedFee.nativeFee) / 1e18).toFixed(6)} native
+                {quotedFee.lzTokenFee > 0n && ` + ${(Number(quotedFee.lzTokenFee) / 1e18).toFixed(6)} LZ`}
+              </span>
+            </div>
           </div>
+        )}
+
+        {/* Quoting indicator */}
+        {quoting && (
+          <div className="text-xs text-on-surface-variant animate-pulse text-center py-1">Quoting fee...</div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-2 items-center flex-wrap pt-1">
+          {needsApproval && (
+            <button className="btn flex-1" onClick={handleApprove}
+              disabled={approveTx.status === 'pending' || !amount || (srcIsStark && !quotedFee)}
+              title={srcIsStark && !quotedFee ? 'Quote the fee first' : undefined}>
+              {approveTx.status === 'pending' ? 'Approving...' : srcIsStark ? (srcIsAdapter ? 'Approve All' : 'Approve Fee') : 'Approve'}
+            </button>
+          )}
+          <button className="btn btn-primary flex-1" onClick={handleSend}
+            disabled={!quotedFee || sendTx.status === 'pending' || !srcConnected}>
+            {sendTx.status === 'pending' ? 'Sending...' : quoting ? 'Quoting...' : 'Send'}
+          </button>
         </div>
-      )}
 
-      <div className="mt-3">
+        {!srcConnected && !srcIsStark && evm.isConnected && (
+          <div className="pt-1">
+            <SwitchChainButton chainName={srcChain.name} onSwitch={() => evm.switchNetwork((srcChain as LZChain).chainId)} />
+          </div>
+        )}
+
+        {/* Status */}
+        {quoteTx.status === 'error' && (
+          <div>
+            <TxStatus state={quoteTx} />
+            <button className="btn btn-sm mt-2" onClick={handleQuote} disabled={quoting || !amount}>
+              <span className="material-symbols-outlined text-sm">refresh</span> Retry Quote
+            </button>
+          </div>
+        )}
         {approveTx.status !== 'idle' && <TxStatus state={approveTx} />}
         <TxStatus state={sendTx} showLzScan />
       </div>
-    </Section>
+    </div>
   );
 }
 
-// ── Side balance (token + native) ────────────────────────────────────────────
+// ── Side balance ────────────────────────────────────────────────────────────
 
 function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, starkFeeToken, refreshKey }: {
   label: string;
@@ -569,8 +574,6 @@ function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, s
         if (isEvm(chain)) {
           if (!evm.address) { setState(null); return; }
           const { Contract: C, JsonRpcProvider: P, Network, formatEther, formatUnits } = await import('ethers');
-          // Always use our own RPC for reads. The wallet's injected provider often points at rate-limited
-          // public endpoints (e.g. zan.top for Arb Sepolia) which 429 under load.
           const net = Network.from(chain.chainId);
           const provider = new P(chain.rpc, net, { staticNetwork: net });
           let tokenAddr = oftAddr;
@@ -631,16 +634,16 @@ function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, s
   }, [chain, oftAddr, detectedType, evm.address, stark.address, evm.chainId, starkFeeToken, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="bg-surface-container rounded-lg px-3 py-2 border border-outline-variant/10">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-0.5">{label}</div>
+    <div className="bg-[var(--bg)] rounded-xl px-3 py-2.5 border border-[var(--border)]">
+      <div className="text-[11px] text-on-surface-variant mb-1 font-medium">{label}</div>
       {err ? (
-        <div className="text-[11px] text-error font-mono">err: {err.slice(0, 40)}</div>
+        <div className="text-[11px] text-error font-mono truncate">{err.slice(0, 40)}</div>
       ) : !state ? (
-        <div className="text-[11px] text-on-surface-variant font-mono">—</div>
+        <div className="text-[11px] text-on-surface-variant font-mono">--</div>
       ) : (
         <div className="text-[12px] font-mono text-on-surface">
           <span>{state.token}</span>{state.tokenSym && <span className="text-on-surface-variant"> {state.tokenSym}</span>}
-          <span className="text-on-surface-variant mx-2">·</span>
+          <span className="text-on-surface-variant/40 mx-1.5">/</span>
           <span>{state.native}</span><span className="text-on-surface-variant"> {state.nativeSym}</span>
         </div>
       )}
@@ -648,7 +651,7 @@ function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, s
   );
 }
 
-// ── Chain select (reused from OFTWiring pattern) ─────────────────────────────
+// ── Chain select ────────────────────────────────────────────────────────────
 
 function chainIconUrl(chainKey: string): string {
   const base = chainKey
@@ -661,10 +664,10 @@ function chainIconUrl(chainKey: string): string {
   return `https://icons.llamao.fi/icons/chains/rsz_${overrides[base] ?? base}.jpg`;
 }
 
-function ChainIcon({ chainKey, size = 18 }: { chainKey: string; size?: number }): JSX.Element {
+function ChainIcon({ chainKey, size = 20 }: { chainKey: string; size?: number }): JSX.Element {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [chainKey]);
-  if (failed) return <span className="w-[18px] h-[18px] rounded-full bg-[#1e1e2e] flex-shrink-0 inline-flex items-center justify-center text-[8px] text-[#6c6c8a]">?</span>;
+  if (failed) return <span style={{ width: size, height: size }} className="rounded-full bg-surface-container-high flex-shrink-0 inline-flex items-center justify-center text-[8px] text-on-surface-variant">?</span>;
   return <img src={chainIconUrl(chainKey)} alt="" width={size} height={size} onError={() => setFailed(true)} className="rounded-full flex-shrink-0 object-cover" />;
 }
 
@@ -700,46 +703,47 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect, disabledEid 
   const filteredEvm = evmChains.filter((c) => c.name.toLowerCase().includes(q) || String(c.eid).includes(q));
   const isSelectedStark = isStarknet(selected);
   const selectedChainKey = isSelectedStark ? '' : (selected as LZChain).chainKey;
-  const displayName = `${selected.name} — EID ${selected.eid}`;
-  const snMonogram = <span className="w-[18px] h-[18px] rounded-full bg-[#919bff22] border border-[#919bff55] flex-shrink-0 inline-flex items-center justify-center text-[9px] text-[#919bff] font-bold">SN</span>;
+  const displayName = selected.name;
+  const snMonogram = <span className="w-5 h-5 rounded-md bg-tertiary/15 border border-tertiary/30 flex-shrink-0 inline-flex items-center justify-center text-[9px] text-tertiary font-bold">SN</span>;
 
   return (
     <div ref={ref} className="relative">
-      <button className={`input text-left cursor-pointer flex items-center gap-2 justify-between ${isSelectedStark ? 'border-[#2a2a5a] text-[#919bff]' : ''}`}
+      <button className={`input text-left cursor-pointer flex items-center gap-2.5 justify-between ${isSelectedStark ? 'border-tertiary/20 text-tertiary' : ''}`}
         onClick={() => setOpen((v) => !v)} type="button">
-        <span className="flex items-center gap-2 truncate">
-          {isSelectedStark ? snMonogram : <ChainIcon chainKey={selectedChainKey} size={18} />}
-          {displayName}
+        <span className="flex items-center gap-2.5 truncate">
+          {isSelectedStark ? snMonogram : <ChainIcon chainKey={selectedChainKey} size={20} />}
+          <span className="font-medium">{displayName}</span>
+          <span className="text-[11px] text-on-surface-variant">EID {selected.eid}</span>
         </span>
-        <span className="text-[11px] text-on-surface-variant ml-2">{open ? '▲' : '▼'}</span>
+        <span className="material-symbols-outlined text-on-surface-variant text-sm ml-2">{open ? 'expand_less' : 'expand_more'}</span>
       </button>
       {open && (
         <div className="chain-dropdown">
-          <div className={`chain-option border-b border-outline-variant/10 ${isSelectedStark ? 'chain-option-active' : ''} ${disabledEid === stark.eid ? 'chain-option-disabled' : ''}`}
+          <div className={`chain-option border-b border-[var(--border)] ${isSelectedStark ? 'chain-option-active' : ''} ${disabledEid === stark.eid ? 'chain-option-disabled' : ''}`}
             onClick={() => { if (disabledEid !== stark.eid) { onSelect(stark); setOpen(false); } }}>
             {snMonogram}
-            <span className={isSelectedStark ? 'text-[#919bff]' : 'text-[#919bff88]'}>{stark.name}</span>
+            <span className={isSelectedStark ? 'text-tertiary font-medium' : 'text-tertiary/70'}>{stark.name}</span>
             <span className="text-[11px] text-on-surface-variant ml-auto">EID {stark.eid}</span>
           </div>
-          <div className="p-2 border-b border-outline-variant/10">
-            <input ref={inputRef} className="input" placeholder="Search chain or EID…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <div className="p-2.5 border-b border-[var(--border)]">
+            <input ref={inputRef} className="input" placeholder="Search chain or EID..." value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
           <div className="overflow-y-auto max-h-[260px]">
-            {filteredEvm.length === 0 && <div className="px-3 py-2.5 text-on-surface-variant text-[13px]">No chains match</div>}
+            {filteredEvm.length === 0 && <div className="px-4 py-3 text-on-surface-variant text-[13px]">No chains match</div>}
             {(['L1', 'L2'] as const).map((cat) => {
               const group = filteredEvm.filter((c) => chainCategory(c) === cat);
               if (group.length === 0) return null;
               return (
                 <div key={cat}>
-                  <div className="label px-3 pt-2 pb-0.5 mb-0">{cat}</div>
+                  <div className="text-[10px] uppercase tracking-[0.1em] text-on-surface-variant/50 font-semibold px-4 pt-2.5 pb-1">{cat}</div>
                   {group.map((c) => {
                     const isDisabled = disabledEid === c.eid;
                     return (
                       <div key={c.eid}
                         className={`chain-option ${!isSelectedStark && (selected as LZChain).eid === c.eid ? 'chain-option-active' : ''} ${isDisabled ? 'chain-option-disabled' : ''}`}
                         onClick={() => { if (!isDisabled) { onSelect(toAnyEvm(c)); setOpen(false); } }}>
-                        <ChainIcon chainKey={c.chainKey} size={18} />
-                        <span>{c.name}</span>
+                        <ChainIcon chainKey={c.chainKey} size={20} />
+                        <span className="font-medium">{c.name}</span>
                         <span className="text-[11px] text-on-surface-variant ml-auto">EID {c.eid}</span>
                       </div>
                     );

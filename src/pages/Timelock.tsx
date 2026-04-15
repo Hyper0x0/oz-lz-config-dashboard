@@ -7,7 +7,7 @@ import { useTimelockOps } from '@/hooks/useTimelockOps';
 import { useCairoTimelock } from '@/hooks/useCairoTimelock';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
-import { ChainBadge } from '@/components/ChainBadge';
+import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown } from '@/utils/timelock';
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
@@ -84,44 +84,53 @@ function StateBadge({ state }: { state: OperationState }): JSX.Element {
 }
 
 const TIMELOCK_CHAINS = [
-  { id: 1,       name: 'Ethereum',         rpc: 'https://eth.llamarpc.com',           explorer: 'etherscan.io' },
-  { id: 42161,   name: 'Arbitrum',          rpc: 'https://arb1.arbitrum.io/rpc',       explorer: 'arbiscan.io' },
-  { id: 421614,  name: 'Arbitrum Sepolia',  rpc: 'https://arbitrum-sepolia.publicnode.com', explorer: 'sepolia.arbiscan.io' },
-  { id: 10,      name: 'Optimism',          rpc: 'https://mainnet.optimism.io',        explorer: 'optimistic.etherscan.io' },
-  { id: 8453,    name: 'Base',              rpc: 'https://mainnet.base.org',           explorer: 'basescan.org' },
-  { id: 84532,   name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',           explorer: 'sepolia.basescan.org' },
-  { id: 137,     name: 'Polygon',           rpc: 'https://polygon-rpc.com',            explorer: 'polygonscan.com' },
-  { id: 56,      name: 'BNB Chain',         rpc: 'https://bsc-dataseed.binance.org',   explorer: 'bscscan.com' },
-  { id: 43114,   name: 'Avalanche',         rpc: 'https://api.avax.network/ext/bc/C/rpc', explorer: 'snowscan.xyz' },
-  { id: 11155111,name: 'Sepolia',           rpc: 'https://rpc.sepolia.org',            explorer: 'sepolia.etherscan.io' },
+  { id: 1,       name: 'Ethereum',         rpc: 'https://eth.llamarpc.com',           explorer: 'etherscan.io',             isTestnet: false },
+  { id: 42161,   name: 'Arbitrum',          rpc: 'https://arb1.arbitrum.io/rpc',       explorer: 'arbiscan.io',              isTestnet: false },
+  { id: 10,      name: 'Optimism',          rpc: 'https://mainnet.optimism.io',        explorer: 'optimistic.etherscan.io',  isTestnet: false },
+  { id: 8453,    name: 'Base',              rpc: 'https://mainnet.base.org',           explorer: 'basescan.org',             isTestnet: false },
+  { id: 137,     name: 'Polygon',           rpc: 'https://polygon-rpc.com',            explorer: 'polygonscan.com',          isTestnet: false },
+  { id: 56,      name: 'BNB Chain',         rpc: 'https://bsc-dataseed.binance.org',   explorer: 'bscscan.com',              isTestnet: false },
+  { id: 43114,   name: 'Avalanche',         rpc: 'https://api.avax.network/ext/bc/C/rpc', explorer: 'snowscan.xyz',          isTestnet: false },
+  { id: 11155111,name: 'Sepolia',           rpc: 'https://rpc.sepolia.org',            explorer: 'sepolia.etherscan.io',     isTestnet: true },
+  { id: 421614,  name: 'Arbitrum Sepolia',  rpc: 'https://arbitrum-sepolia.publicnode.com', explorer: 'sepolia.arbiscan.io',  isTestnet: true },
+  { id: 11155420,name: 'Optimism Sepolia',  rpc: 'https://sepolia.optimism.io',        explorer: 'sepolia-optimism.etherscan.io', isTestnet: true },
+  { id: 84532,   name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',           explorer: 'sepolia.basescan.org',     isTestnet: true },
 ];
 
 type ChainType = 'evm' | 'starknet';
 
-const STARK_CHAINS = [
-  { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
-  { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
-];
+const STARK_CHAINS: Record<'mainnet' | 'testnet', { id: string; name: string; rpc: string; explorer: string }> = {
+  mainnet: { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
+  testnet: { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
+};
 
 export function Timelock(): JSX.Element {
   const { evm, stark } = useWallet();
   const ops = useTimelockOps(evm.signer);
   const cairoOps = useCairoTimelock(stark.account);
   const [chainType, setChainType] = useState<ChainType>('evm');
-  const [starkChainId, setStarkChainId] = useState('SN_SEPOLIA');
-  const starkChain = STARK_CHAINS.find((c) => c.id === starkChainId) ?? STARK_CHAINS[1];
 
-  // Chain: auto-detect from wallet, with manual override (persisted)
-  const walletChain = TIMELOCK_CHAINS.find((c) => c.id === evm.chainId);
-  const [manualChainId, setManualChainId] = useState<number | null>(() => {
-    try { const s = localStorage.getItem('ozlz_timelock_chain'); return s ? Number(s) : null; } catch { return null; }
+  // Testnet/Mainnet toggle — filters EVM chains and auto-sets Starknet chain
+  const [isTestnet, setIsTestnet] = useState(true);
+  const filteredChains = TIMELOCK_CHAINS.filter((c) => c.isTestnet === isTestnet);
+  const starkChain = isTestnet ? STARK_CHAINS.testnet : STARK_CHAINS.mainnet;
+
+  // EVM chain selection (persisted)
+  const [activeChainId, setActiveChainId] = useState<number>(() => {
+    try { const s = localStorage.getItem('ozlz_timelock_chain'); return s ? Number(s) : 421614; } catch { return 421614; }
   });
-  function setAndPersistChain(id: number | null) {
-    setManualChainId(id);
-    try { if (id) localStorage.setItem('ozlz_timelock_chain', String(id)); else localStorage.removeItem('ozlz_timelock_chain'); } catch { /* */ }
+  function selectChain(id: number) {
+    setActiveChainId(id);
+    try { localStorage.setItem('ozlz_timelock_chain', String(id)); } catch { /* */ }
   }
-  const activeChainId = manualChainId ?? evm.chainId ?? 421614;
-  const selectedChain = TIMELOCK_CHAINS.find((c) => c.id === activeChainId) ?? TIMELOCK_CHAINS[2];
+  // When toggling testnet/mainnet, reset to the first chain in the new list
+  function handleNetworkToggle(testnet: boolean) {
+    setIsTestnet(testnet);
+    const first = TIMELOCK_CHAINS.find((c) => c.isTestnet === testnet);
+    if (first) selectChain(first.id);
+  }
+  const selectedChain = filteredChains.find((c) => c.id === activeChainId) ?? filteredChains[0];
+  const wrongChain = evm.isConnected && evm.chainId !== selectedChain.id;
 
   const [timelockAddr, setTimelockAddr] = useState(CONTRACTS.adminGateway ?? '');
   const [minDelay,     setMinDelay]     = useState<string>('');
@@ -393,7 +402,6 @@ export function Timelock(): JSX.Element {
   }
 
   const explorerTx = (hash: string) => `https://${selectedChain.explorer}/tx/${hash}`;
-  const wrongChain = evm.isConnected && evm.chainId !== activeChainId;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -403,46 +411,39 @@ export function Timelock(): JSX.Element {
       <div className="col-span-12 lg:col-span-8 space-y-6">
 
         <Section icon="schedule" title="TimelockController" subtitle="Contract address and configuration">
-          {/* Chain type toggle */}
+          {/* Chain type toggle + network mode */}
           <div className="flex gap-2 items-center mb-4 flex-wrap">
             <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
               onClick={() => { setChainType('evm'); setMinDelay(''); }}>EVM</button>
             <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
               onClick={() => { setChainType('starknet'); setMinDelay(''); }}>Starknet</button>
 
+            <span className="w-px h-5 bg-outline-variant/20 mx-1" />
+
+            <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(true)}>Testnet</button>
+            <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+
             {/* Chain selector */}
-            {chainType === 'evm' ? (
+            {chainType === 'evm' && (
               <div className="ml-auto flex items-center gap-2">
-                {evm.isConnected && walletChain && !manualChainId && (
-                  <ChainBadge chainId={walletChain.id} chainName={walletChain.name} status="connected" />
-                )}
-                <select className="input text-xs w-44" value={activeChainId}
-                  onChange={(e) => setAndPersistChain(Number(e.target.value))}>
-                  {TIMELOCK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <select className="input text-xs w-44" value={selectedChain.id}
+                  onChange={(e) => selectChain(Number(e.target.value))}>
+                  {filteredChains.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                {manualChainId && (
-                  <button className="btn btn-sm" onClick={() => setAndPersistChain(null)}>Auto</button>
+                {wrongChain && (
+                  <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
                 )}
               </div>
-            ) : (
+            )}
+            {chainType === 'starknet' && (
               <div className="ml-auto flex items-center gap-2">
-                {stark.isConnected && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet</span>}
-                <select className="input text-xs w-44" value={starkChainId}
-                  onChange={(e) => setStarkChainId(e.target.value)}>
-                  {STARK_CHAINS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <span className="text-xs text-on-surface-variant">{starkChain.name}</span>
+                {stark.isConnected && <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Connected</span>}
               </div>
             )}
           </div>
-
-          {/* Wrong chain warning (EVM only) */}
-          {chainType === 'evm' && evm.isConnected && evm.chainId !== activeChainId && (
-            <div className="flex items-center gap-2 bg-tertiary/5 border border-tertiary/20 rounded-lg px-3 py-2 mb-4 text-xs text-tertiary">
-              <span>Wallet is on {TIMELOCK_CHAINS.find((c) => c.id === evm.chainId)?.name ?? `chain ${evm.chainId}`}, selected is {selectedChain.name}.</span>
-              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet</button>
-              <button className="btn btn-sm" onClick={() => setAndPersistChain(evm.chainId ?? null)}>Use wallet chain</button>
-            </div>
-          )}
 
           <div className="flex gap-3 items-end">
             <div className="flex-1">
@@ -564,7 +565,7 @@ export function Timelock(): JSX.Element {
 
           <div className="mt-4">
             {chainType === 'evm' && wrongChain ? (
-              <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet to {selectedChain.name}</button>
+              <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
             ) : (
               <button className="btn btn-primary" onClick={handleSchedule}
                 disabled={chainType === 'starknet' ? !stark.isConnected || !calldata : !evm.isConnected || !calldata}>
@@ -623,7 +624,7 @@ export function Timelock(): JSX.Element {
                     onClick={handleCancel} disabled={chainType === 'starknet' ? !stark.isConnected : !evm.isConnected}>Cancel</button>
                 )}
                 {(opState === 'Ready' || opState === 'Waiting') && wrongChain && chainType === 'evm' && (
-                  <button className="btn btn-sm" onClick={() => evm.switchNetwork(activeChainId)}>Switch wallet to {selectedChain.name}</button>
+                  <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
                 )}
                 {opState === 'Done' && <span className="text-xs text-on-surface-variant">Already executed — nothing to do</span>}
               </div>
@@ -888,7 +889,7 @@ function RoleManagement({ timelockAddr, ops, evm, wrongChain, chainName, switchN
                     onChange={(e) => setGrantAddr(e.target.value)} spellCheck={false} />
                 </div>
                 {wrongChain ? (
-                  <button className="btn btn-sm" onClick={switchNetwork}>Switch to {chainName}</button>
+                  <SwitchChainButton chainName={chainName} onSwitch={switchNetwork} />
                 ) : (
                   <button className={`btn ${revokeMode ? 'btn-danger' : 'btn-primary'}`}
                     disabled={!grantAddr || grantTx.status === 'pending'}

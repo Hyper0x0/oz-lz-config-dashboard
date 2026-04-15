@@ -13,6 +13,7 @@ import { isStarknet, isEvm } from '@/config/lzCatalog';
 import type { PathwayVerifyResult, TokenInfo, PeerEntry, UlnConfig, ExecutorConfig } from '@/types';
 import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
+import { WalletChainHint } from '@/components/ChainSwitch';
 
 type Tab = 'verify' | 'configure';
 type WiringMode = 'bridge-oft' | 'oft-oft';
@@ -388,13 +389,13 @@ export function OFTWiring(): JSX.Element {
             {/* EVM wallet status — show for whichever side is EVM */}
             {(() => {
               const evmSide = evmHome ?? evmRemote;
-              if (!evmSide || !evm.isConnected) return null;
-              return evm.chainId === evmSide.chainId
-                ? <span className="flex items-center gap-1.5 text-xs text-secondary"><span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>Wallet on {evmSide.name}</span>
-                : <button className="btn btn-sm" onClick={() => evm.switchNetwork(evmSide.chainId)}>Switch wallet to {evmSide.name}</button>;
+              if (!evmSide) return null;
+              return <WalletChainHint isConnected={evm.isConnected} isCorrectChain={evm.chainId === evmSide.chainId}
+                chainName={evmSide.name} onSwitch={() => evm.switchNetwork(evmSide.chainId)} />;
             })()}
-            {hasStarknet && stark.isConnected && (
-              <span className="flex items-center gap-1.5 text-xs text-tertiary"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Starknet connected</span>
+            {hasStarknet && (
+              <WalletChainHint isConnected={stark.isConnected} isCorrectChain={true}
+                chainName="Starknet" onSwitch={() => {}} variant="starknet" />
             )}
           </div>
 

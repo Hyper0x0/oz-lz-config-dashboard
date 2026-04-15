@@ -155,8 +155,8 @@ export function Settings(): JSX.Element {
           placeholder="Your Etherscan API key"
         />
         <div className="flex gap-3 items-center mt-2">
-          <button className="btn btn-primary" onClick={handleSaveApiKey}>Save</button>
-          <button className="btn" onClick={() => { setApiKey(''); saveApiKey(''); }}>Clear</button>
+          <button className="btn btn-primary" onClick={handleSaveApiKey}><span className="material-symbols-outlined text-sm">save</span> Save</button>
+          <button className="btn" onClick={() => { setApiKey(''); saveApiKey(''); }}><span className="material-symbols-outlined text-sm">delete</span> Clear</button>
           {apiKeySaved && <span className="text-xs text-secondary">Saved</span>}
         </div>
       </Section>
@@ -175,7 +175,7 @@ export function Settings(): JSX.Element {
         />
         {evmRpcsError && <div className="text-xs text-error mt-1">{evmRpcsError}</div>}
         <div className="flex gap-3 items-center mt-2">
-          <button className="btn btn-primary" onClick={handleSaveEvmRpcs}>Save EVM RPCs</button>
+          <button className="btn btn-primary" onClick={handleSaveEvmRpcs}><span className="material-symbols-outlined text-sm">save</span> Save EVM RPCs</button>
           <span className="text-xs text-on-surface-variant">Reload after saving to apply.</span>
         </div>
       </Section>
@@ -196,8 +196,8 @@ export function Settings(): JSX.Element {
           placeholder="https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/YOUR_KEY"
         />
         <div className="flex gap-3 items-center mt-2">
-          <button className="btn btn-primary" onClick={handleSave}>Save</button>
-          <button className="btn" onClick={handleReset}>Reset to defaults</button>
+          <button className="btn btn-primary" onClick={handleSave}><span className="material-symbols-outlined text-sm">save</span> Save</button>
+          <button className="btn" onClick={handleReset}><span className="material-symbols-outlined text-sm">restart_alt</span> Reset</button>
           {saved && <span className="text-xs text-secondary">Saved — reload to apply</span>}
         </div>
       </Section>
