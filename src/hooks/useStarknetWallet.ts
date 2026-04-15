@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { connect, disconnect } from 'starknetkit';
 import { WalletAccount, RpcProvider } from 'starknet';
 import { STARKNET_MAINNET, STARKNET_TESTNET } from '@/config/chains';
@@ -12,21 +12,39 @@ export interface StarknetWallet {
   disconnect: () => Promise<void>;
 }
 
+const SN_SEPOLIA_CHAIN_ID = BigInt('0x534e5f5345504f4c4941');
+
+function resolveRpc(chainId: bigint | undefined, rpc?: string): string {
+  const isSepolia = chainId !== undefined && chainId === SN_SEPOLIA_CHAIN_ID;
+  return rpc ?? (isSepolia ? STARKNET_TESTNET.rpc : STARKNET_MAINNET.rpc);
+}
+
 export function useStarknetWallet(): StarknetWallet {
   const [account, setAccount] = useState<WalletAccount | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<string | null>(null);
 
+  // Auto-reconnect: try silent reconnect from starknetkit session
+  useEffect(() => {
+    (async () => {
+      try {
+        const { connector, connectorData, wallet } = await connect({ modalMode: 'neverAsk' });
+        if (!connector || !connectorData?.account || !wallet) return;
+        const resolvedRpc = resolveRpc(connectorData.chainId);
+        const provider = new RpcProvider({ nodeUrl: resolvedRpc });
+        const acc = await WalletAccount.connect(provider, wallet);
+        setAccount(acc);
+        setAddress(connectorData.account);
+        setChainId(connectorData.chainId !== undefined ? connectorData.chainId.toString() : null);
+      } catch { /* no previous session */ }
+    })();
+  }, []);
+
   const connectWallet = useCallback(async (rpc?: string): Promise<void> => {
     const { connector, connectorData, wallet } = await connect({ modalMode: 'alwaysAsk' });
     if (!connector || !connectorData?.account || !wallet) return;
 
-    // Prefer the caller-provided RPC, then detect from chainId reported by wallet,
-    // fall back to mainnet. starknetkit reports chainId as bigint or undefined.
-    // Starknet Sepolia chainId = 0x534e5f5345504f4c4941 (felt encoding of "SN_SEPOLIA")
-    const SN_SEPOLIA_CHAIN_ID = BigInt('0x534e5f5345504f4c4941');
-    const isSepolia = connectorData.chainId !== undefined && connectorData.chainId === SN_SEPOLIA_CHAIN_ID;
-    const resolvedRpc = rpc ?? (isSepolia ? STARKNET_TESTNET.rpc : STARKNET_MAINNET.rpc);
+    const resolvedRpc = resolveRpc(connectorData.chainId, rpc);
     const provider = new RpcProvider({ nodeUrl: resolvedRpc });
     const acc = await WalletAccount.connect(provider, wallet);
 

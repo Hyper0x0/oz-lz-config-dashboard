@@ -46,14 +46,15 @@ function Sidebar(): JSX.Element {
             <span className="material-symbols-outlined text-lg">send</span>
             OFTs
           </NavLink>
-          <div className="mt-8 border-t border-outline-variant/10 pt-4">
-            <NavLink to="/settings" className={({ isActive }) => isActive
-              ? 'flex items-center gap-3 px-4 py-2 rounded bg-surface-container-highest text-primary font-bold border-r-2 border-primary'
-              : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
-              <span className="material-symbols-outlined text-lg">settings</span>
-              Settings
-            </NavLink>
+          <div className="pt-4 pb-2 px-2">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-outline-variant font-bold">System</span>
           </div>
+          <NavLink to="/settings" className={({ isActive }) => isActive
+            ? 'flex items-center gap-3 px-4 py-2 rounded bg-surface-container-highest text-primary font-bold border-r-2 border-primary'
+            : 'flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors'}>
+            <span className="material-symbols-outlined text-lg">settings</span>
+            Settings
+          </NavLink>
         </nav>
       </div>
     </aside>
@@ -62,8 +63,6 @@ function Sidebar(): JSX.Element {
 
 function HeaderWallets(): JSX.Element {
   const { evm, stark } = useWallet();
-  const loc = useLocation();
-  const showStarknet = ['/wiring', '/ofts', '/roles', '/timelock'].includes(loc.pathname);
   return (
     <div className="flex items-center gap-2">
       {/* EVM wallet */}
@@ -77,19 +76,17 @@ function HeaderWallets(): JSX.Element {
           Connect EVM
         </button>
       )}
-      {/* Starknet wallet — only on wiring page */}
-      {showStarknet && (
-        stark.address ? (
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-container rounded border border-tertiary/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
-            <span className="font-mono text-[11px] text-tertiary">{stark.address.slice(0,8)}…{stark.address.slice(-4)}</span>
-            <button onClick={() => stark.disconnect().catch(() => {})} className="text-on-surface-variant hover:text-error transition-colors ml-1 text-xs">✕</button>
-          </div>
-        ) : (
-          <button onClick={() => stark.connect().catch(() => {})} className="px-4 py-1.5 bg-surface-container border border-tertiary/30 text-tertiary font-headline text-xs font-bold uppercase tracking-wider rounded hover:bg-tertiary/5 transition-all">
-            Connect Starknet
-          </button>
-        )
+      {/* Starknet wallet */}
+      {stark.address ? (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-container rounded border border-tertiary/20">
+          <span className="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+          <span className="font-mono text-[11px] text-tertiary">{stark.address.slice(0,8)}…{stark.address.slice(-4)}</span>
+          <button onClick={() => stark.disconnect().catch(() => {})} className="text-on-surface-variant hover:text-error transition-colors ml-1 text-xs">✕</button>
+        </div>
+      ) : (
+        <button onClick={() => stark.connect().catch(() => {})} className="px-4 py-1.5 bg-surface-container border border-tertiary/30 text-tertiary font-headline text-xs font-bold uppercase tracking-wider rounded hover:bg-tertiary/5 transition-all">
+          Connect Starknet
+        </button>
       )}
     </div>
   );
