@@ -83,6 +83,16 @@
         { "name": "allocator", "type": "address" }
       ],
       "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "setFastRedeemFeeBps",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "_vaultId", "type": "uint256" },
+        { "name": "_bps",     "type": "uint256" }
+      ],
+      "outputs": []
     }
   ]
 }
