@@ -59,6 +59,7 @@ export function OFTWiring(): JSX.Element {
   const [mode, setMode] = useState<WiringMode>('bridge-oft');
   const [detectedHome, setDetectedHome] = useState<'adapter' | 'oft' | null>(null);
   const [detectedRemote, setDetectedRemote] = useState<'adapter' | 'oft' | null>(null);
+  const [detectError, setDetectError] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
 
   // Contract addresses
@@ -103,6 +104,8 @@ export function OFTWiring(): JSX.Element {
     setDetecting(true);
     detectTimer.current = setTimeout(async () => {
       try {
+        setDetectError(null);
+        const errors: string[] = [];
         // Detect home side — prefer wallet RPC when available
         let homeType: 'adapter' | 'oft' | null = null;
         if (evmHome && homeValid) {
@@ -111,8 +114,9 @@ export function OFTWiring(): JSX.Element {
         } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
           if (r) {
-            homeType = r.type;
+            homeType = r.type === 'unknown' ? null : r.type;
             if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr); // auto-fill underlying token
+            if (r.error) errors.push(`Source: ${r.error}`);
           }
         }
         // Detect remote side
@@ -124,12 +128,14 @@ export function OFTWiring(): JSX.Element {
           const starkRemote = remote as StarknetChain;
           const r = await cairo.detectCairoOFTType(remoteAddr, starkRemote.rpc).catch(() => null);
           if (r) {
-            remoteType = r.type;
+            remoteType = r.type === 'unknown' ? null : r.type;
             if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr);
+            if (r.error) errors.push(`Dest: ${r.error}`);
           }
         }
         setDetectedHome(homeType);
         setDetectedRemote(remoteType);
+        if (errors.length) setDetectError(errors.join(' · '));
         if (homeType) setMode(homeType === 'adapter' ? 'bridge-oft' : 'oft-oft');
         else if (remoteType) setMode(remoteType === 'adapter' ? 'bridge-oft' : 'oft-oft');
       } catch {
@@ -229,23 +235,28 @@ export function OFTWiring(): JSX.Element {
       // Read Starknet side: try token() first (adapter), then read name from underlying ERC20
       let starkName: { name: string; symbol: string } | null = null;
       let starkUnderlying: string | null = null;
+      const starkNotes: string[] = [];
       if (isAddr(starkAddr)) {
         try {
-          // Check if adapter (has token())
           const detect = await cairo.detectCairoOFTType(starkAddr, starkData.rpc);
+          if (detect.error) starkNotes.push(detect.error);
           if (detect.type === 'adapter' && detect.tokenAddr) {
             starkUnderlying = detect.tokenAddr;
             setEvmUnderlyingToken(detect.tokenAddr);
-            // Read name from underlying ERC20 token
             starkName = await cairo.readCairoTokenInfo(detect.tokenAddr, starkData.rpc);
-          } else {
-            // Plain OFT — read name from the OFT itself
+          } else if (detect.type === 'oft') {
+            // Plain OFT — may or may not expose name() itself
             starkName = await cairo.readCairoTokenInfo(starkAddr, starkData.rpc);
+          } else {
+            // 'unknown' — don't attempt to read name, we already captured the reason
+            starkName = null;
           }
-        } catch {
+        } catch (e) {
+          starkNotes.push(e instanceof Error ? e.message : String(e));
           try { starkName = await cairo.readCairoTokenInfo(starkAddr, starkData.rpc); } catch { /* */ }
         }
       }
+      if (starkNotes.length) setTokenInfoError(starkNotes.join(' · '));
 
       // Also read underlying from EVM adapter if applicable — use wallet provider
       if (isEvmAdapter && evmSide && isAddr(evmAddr) && !evmUnderlyingToken) {
@@ -338,6 +349,11 @@ export function OFTWiring(): JSX.Element {
               )}
             </div>
           </div>
+          {detectError && (
+            <div className="text-[11px] text-tertiary bg-tertiary/5 border border-tertiary/20 rounded-md px-3 py-2 mb-3 break-all">
+              Detection: {detectError}
+            </div>
+          )}
 
           {/* Chain selectors */}
           <div className="flex gap-3 items-end">
@@ -668,6 +684,8 @@ interface StarkSideState {
   dvnSend: import('@/utils/cairoLzConfig').DecodedStarknetUln | null;
   dvnRecv: import('@/utils/cairoLzConfig').DecodedStarknetUln | null;
   executor: import('@/utils/cairoLzConfig').DecodedStarknetExecutor | null;
+  rateLimitOutbound: { limit: bigint; window: number } | null;
+  rateLimitInbound: { limit: bigint; window: number } | null;
 }
 
 function CheckRow({ label, passed, detail, severity = 'critical' }: {
@@ -698,13 +716,28 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
   const evmChainData   = (isStarknet(home) ? remote : home) as LZChain & { kind: 'evm' };
   const cairoAddr = isStarknet(home) ? homeAddr : remoteAddr;
   const evmAddr   = isStarknet(home) ? remoteAddr : homeAddr;
-  const { resolveName: resolveEvmDvn } = useDVNCatalog(evmChainData.chainKey);
+  const { resolveName: resolveEvmDvn, dvns: evmDvnList } = useDVNCatalog(evmChainData.chainKey);
+  const { resolveName: resolveStarkDvn, dvns: starkDvnList } = useDVNCatalog(starkChainData.chainKey);
 
-  /** Format a DVN address with its resolved name if known. */
+  /** Format a DVN address with its resolved name (EVM or Starknet depending on side). */
   function dvnLabel(addr: string): string {
     const name = resolveEvmDvn(addr);
     return name ? `${name} (${addr.slice(0, 8)}…${addr.slice(-4)})` : addr;
   }
+  /** Same, but for Starknet DVNs. Felt addresses are zero-padding-agnostic (BigInt-compared). */
+  function starkDvnLabel(addr: string): string {
+    // Try exact match first (fast path), then BigInt-compare against the catalog list
+    const exact = resolveStarkDvn(addr);
+    if (exact) return `${exact} (${addr.slice(0, 8)}…${addr.slice(-4)})`;
+    try {
+      const target = BigInt(addr);
+      const hit = starkDvnList.find((d) => { try { return BigInt(d.address) === target; } catch { return false; } });
+      if (hit) return `${hit.name} (${addr.slice(0, 8)}…${addr.slice(-4)})`;
+    } catch { /* addr not a valid felt */ }
+    return addr;
+  }
+  // Silence unused-var lint for evmDvnList (kept for symmetry / future UI reuse)
+  void evmDvnList;
 
   const [checking, setChecking] = useState(false);
   const [evmState, setEvmState] = useState<EvmSideState | null>(null);
@@ -730,11 +763,13 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             cairo.readEnforcedOptions(cairoAddr, evmChainData.eid, starkChainData.rpc),
             cairo.readPeer(cairoAddr, evmChainData.eid, starkChainData.rpc),
           ]);
-          // Read DVN/executor config if send/recv libraries are available
-          const [dvnSend, executor, dvnRecv] = await Promise.all([
+          // Read DVN/executor config if send/recv libraries are available + rate limits (adapter-only; null if missing)
+          const [dvnSend, executor, dvnRecv, rateLimitOutbound, rateLimitInbound] = await Promise.all([
             sendLib ? cairoEndpoint.readSendUlnConfig(starkChainData.endpoint, cairoAddr, sendLib, evmChainData.eid, starkChainData.rpc) : null,
             sendLib ? cairoEndpoint.readSendExecutorConfig(starkChainData.endpoint, cairoAddr, sendLib, evmChainData.eid, starkChainData.rpc) : null,
             recvLibResult.lib ? cairoEndpoint.readReceiveUlnConfig(starkChainData.endpoint, cairoAddr, recvLibResult.lib, evmChainData.eid, starkChainData.rpc) : null,
+            cairo.readOutboundRateLimit(cairoAddr, evmChainData.eid, starkChainData.rpc).catch(() => null),
+            cairo.readInboundRateLimit(cairoAddr, evmChainData.eid, starkChainData.rpc).catch(() => null),
           ]);
           return {
             sendLib,
@@ -746,6 +781,8 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             dvnSend,
             dvnRecv,
             executor,
+            rateLimitOutbound,
+            rateLimitInbound,
           };
         })(),
       ]);
@@ -899,6 +936,27 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             detail={starkState.recvLib ? `${starkState.recvLib}${starkState.recvLibIsDefault ? ' (default)' : ''}` : 'Not set'}
             severity={starkState.recvLibIsDefault ? 'warning' : 'critical'} />
           <CheckRow label="DVNs configured (receive)" passed={!!starkState.dvnRecv && starkState.dvnRecv.requiredDVNCount > 0} detail={starkState.dvnRecv?.requiredDVNCount ? `${starkState.dvnRecv.requiredDVNCount} required: ${starkState.dvnRecv.requiredDVNs.join(', ')}` : 'No DVNs set'} />
+          {(starkState.rateLimitOutbound || starkState.rateLimitInbound) && (
+            <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-tertiary mt-3 mb-1">
+              {starkChainData.name} — rate limits
+            </div>
+          )}
+          {starkState.rateLimitOutbound && (
+            <CheckRow label="Outbound rate limit"
+              passed={starkState.rateLimitOutbound.limit > 0n}
+              severity="warning"
+              detail={starkState.rateLimitOutbound.limit > 0n
+                ? `${starkState.rateLimitOutbound.limit.toString()} / ${starkState.rateLimitOutbound.window}s`
+                : 'Not configured (no cap)'} />
+          )}
+          {starkState.rateLimitInbound && (
+            <CheckRow label="Inbound rate limit"
+              passed={starkState.rateLimitInbound.limit > 0n}
+              severity="warning"
+              detail={starkState.rateLimitInbound.limit > 0n
+                ? `${starkState.rateLimitInbound.limit.toString()} / ${starkState.rateLimitInbound.window}s`
+                : 'Not configured (no cap)'} />
+          )}
         </>
       )}
     </section>

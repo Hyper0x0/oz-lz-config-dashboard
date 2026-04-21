@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { JsonRpcProvider, Interface, FunctionFragment } from 'ethers';
 import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import timelockTarget from '@/config/timelockTarget.json';
+import timelockTargetStarknet from '@/config/timelockTargetStarknet.json';
 import { useWallet } from '@/context/WalletContext';
 import { useTimelockOps } from '@/hooks/useTimelockOps';
 import { useCairoTimelock } from '@/hooks/useCairoTimelock';
@@ -9,23 +10,54 @@ import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
+import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
 import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown } from '@/utils/timelock';
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
 import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
 import ERC20ABI from '@/abis/evm/ERC20.json';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
+import TimelockCairoABI from '@/abis/svm/TimelockController.json';
+import OFTCairoABI from '@/abis/svm/OFT.json';
+import OFTAdapterCairoABI from '@/abis/svm/OFTAdapter.json';
+import EndpointV2CairoABI from '@/abis/svm/EndpointV2.json';
+import AccessControlCairoABI from '@/abis/svm/AccessControl.json';
+import {
+  extractFunctions as extractStarkFunctions,
+  selectorFromName,
+  encodeCalldata as encodeStarkArgs,
+  argPlaceholder as starkArgPlaceholder,
+  decodeStarknetCall,
+  toFeltHex,
+} from '@/utils/starknetTimelock';
 import type { TxState, OperationState } from '@/types';
 import { VaultState } from '@/types';
 
-// ── Parse timelockTarget.json once ───────────────────────────────────────────
+// ── Parse EVM timelockTarget.json once ──────────────────────────────────────
 const TARGET_IFACE = new Interface(timelockTarget.abi);
-const WRITE_FUNCTIONS = TARGET_IFACE.fragments.filter(
+const EVM_WRITE_FUNCTIONS = TARGET_IFACE.fragments.filter(
   (f): f is FunctionFragment =>
     FunctionFragment.isFragment(f) &&
     f.stateMutability !== 'view' &&
     f.stateMutability !== 'pure',
 );
+
+// ── Parse Starknet timelockTargetStarknet.json once ─────────────────────────
+const STARK_TARGET_ABI = timelockTargetStarknet.abi as unknown[];
+const STARK_WRITE_FUNCTIONS = extractStarkFunctions(STARK_TARGET_ABI, 'external');
+
+// ── Unified UI function shape for the picker ────────────────────────────────
+interface UiInput { name: string; type: string }
+interface UiFunction { name: string; inputs: UiInput[] }
+
+const EVM_UI_FNS: UiFunction[] = EVM_WRITE_FUNCTIONS.map((f) => ({
+  name: f.name,
+  inputs: f.inputs.map((i) => ({ name: i.name ?? '', type: i.type })),
+}));
+const STARK_UI_FNS: UiFunction[] = STARK_WRITE_FUNCTIONS.map((f) => ({
+  name: f.name,
+  inputs: f.inputs.map((i) => ({ name: i.name, type: i.type })),
+}));
 
 function parseArg(value: string, type: string): unknown {
   if (type === 'bool') return value === 'true' || value === '1';
@@ -33,7 +65,7 @@ function parseArg(value: string, type: string): unknown {
   return value; // address, bytes*, string
 }
 
-// ── Calldata decoder — tries multiple ABIs ──────────────────────────────────
+// ── Calldata decoders — try multiple ABIs ───────────────────────────────────
 const DECODE_IFACES = [
   { name: 'Target',          iface: TARGET_IFACE },
   { name: 'TimelockController', iface: new Interface(TimelockControllerABI) },
@@ -42,6 +74,15 @@ const DECODE_IFACES = [
   { name: 'EndpointV2',      iface: new Interface(EndpointV2ABI) },
   { name: 'ERC20',           iface: new Interface(ERC20ABI) },
   { name: 'AccessControl',   iface: new Interface(AccessControlABI) },
+];
+
+const STARK_DECODE_ABIS = [
+  { name: 'Target',             abi: STARK_TARGET_ABI },
+  { name: 'TimelockController', abi: TimelockCairoABI as unknown[] },
+  { name: 'OFT',                abi: OFTCairoABI as unknown[] },
+  { name: 'OFTAdapter',         abi: OFTAdapterCairoABI as unknown[] },
+  { name: 'EndpointV2',         abi: EndpointV2CairoABI as unknown[] },
+  { name: 'AccessControl',      abi: AccessControlCairoABI as unknown[] },
 ];
 
 interface DecodedCall { contract: string; fn: string; args: Record<string, string> }
@@ -99,10 +140,13 @@ const TIMELOCK_CHAINS = [
 
 type ChainType = 'evm' | 'starknet';
 
-const STARK_CHAINS: Record<'mainnet' | 'testnet', { id: string; name: string; rpc: string; explorer: string }> = {
-  mainnet: { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
-  testnet: { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
-};
+/** Resolve the Starknet chain entry with the user's RPC override from Settings applied at call time. */
+function resolveStarkChain(isTestnet: boolean): { id: string; name: string; rpc: string; explorer: string } {
+  if (isTestnet) {
+    return { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: getStarknetSepoliaRpc(STARKNET_TESTNET.rpc), explorer: 'sepolia.voyager.online' };
+  }
+  return { id: 'SN_MAIN', name: 'Starknet Mainnet', rpc: getStarknetMainnetRpc(STARKNET_MAINNET.rpc), explorer: 'voyager.online' };
+}
 
 export function Timelock(): JSX.Element {
   const { evm, stark } = useWallet();
@@ -113,7 +157,7 @@ export function Timelock(): JSX.Element {
   // Testnet/Mainnet toggle — filters EVM chains and auto-sets Starknet chain
   const [isTestnet, setIsTestnet] = useState(true);
   const filteredChains = TIMELOCK_CHAINS.filter((c) => c.isTestnet === isTestnet);
-  const starkChain = isTestnet ? STARK_CHAINS.testnet : STARK_CHAINS.mainnet;
+  const starkChain = resolveStarkChain(isTestnet);
 
   // EVM chain selection (persisted)
   const [activeChainId, setActiveChainId] = useState<number>(() => {
@@ -134,15 +178,22 @@ export function Timelock(): JSX.Element {
 
   const [timelockAddr, setTimelockAddr] = useState(CONTRACTS.adminGateway ?? '');
   const [minDelay,     setMinDelay]     = useState<string>('');
+  const [minDelayError, setMinDelayError] = useState<string | null>(null);
 
-  // ── Dynamic function picker ───────────────────────────────────────────────
-  const [selectedFn, setSelectedFn] = useState(WRITE_FUNCTIONS[0]?.name ?? '');
-  const [fnArgs,     setFnArgs]     = useState<string[]>(() =>
-    WRITE_FUNCTIONS[0] ? WRITE_FUNCTIONS[0].inputs.map(() => '') : [],
+  // ── Dynamic function picker (unified EVM / Starknet) ──────────────────────
+  const uiFunctions: UiFunction[] = chainType === 'starknet' ? STARK_UI_FNS : EVM_UI_FNS;
+  const [selectedFn, setSelectedFn] = useState<string>(() => uiFunctions[0]?.name ?? '');
+
+  // When chainType flips, reset selection to the first fn of the new list
+  useEffect(() => {
+    setSelectedFn(uiFunctions[0]?.name ?? '');
+  }, [chainType]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentFn = uiFunctions.find((f) => f.name === selectedFn) ?? null;
+
+  const [fnArgs, setFnArgs] = useState<string[]>(() =>
+    uiFunctions[0] ? uiFunctions[0].inputs.map(() => '') : [],
   );
-
-  const currentFn = WRITE_FUNCTIONS.find((f) => f.name === selectedFn) ?? null;
-
   useEffect(() => {
     setFnArgs(currentFn ? currentFn.inputs.map(() => '') : []);
   }, [selectedFn]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -152,31 +203,87 @@ export function Timelock(): JSX.Element {
   }
 
   // ── Calldata encoding ─────────────────────────────────────────────────────
-  const { calldata, calldataError } = useMemo(() => {
-    if (!currentFn) return { calldata: null, calldataError: 'No function selected' };
+  // EVM: hex string.  Starknet: { selector, felts[] }.  One is active at a time.
+  const { calldata, calldataError, starkSelector, starkCalldata } = useMemo(() => {
+    if (!currentFn) return { calldata: null, calldataError: 'No function selected', starkSelector: null, starkCalldata: null };
+
+    if (chainType === 'starknet') {
+      const fn = STARK_WRITE_FUNCTIONS.find((f) => f.name === currentFn.name);
+      if (!fn) return {
+        calldata: null, starkSelector: null, starkCalldata: null,
+        calldataError: STARK_UI_FNS.length === 0
+          ? 'No functions in timelockTargetStarknet.json — populate the abi field.'
+          : 'Function not found in Starknet target ABI',
+      };
+      // Don't encode until all args are filled (avoid noisy errors while typing)
+      if (fnArgs.some((v, i) => v === '' && !fn.inputs[i]?.type.endsWith('::ByteArray'))) {
+        return { calldata: null, calldataError: null, starkSelector: null, starkCalldata: null };
+      }
+      try {
+        const felts = encodeStarkArgs(fn, fnArgs);
+        const selector = selectorFromName(fn.name);
+        return { calldata: null, calldataError: null, starkSelector: selector, starkCalldata: felts };
+      } catch (e) {
+        return { calldata: null, starkSelector: null, starkCalldata: null, calldataError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+
+    // EVM branch
     if (fnArgs.some((v) => v === '' && currentFn.inputs[fnArgs.indexOf(v)]?.type !== 'string'))
-      return { calldata: null, calldataError: null }; // not ready yet, no error shown
+      return { calldata: null, calldataError: null, starkSelector: null, starkCalldata: null };
     try {
       const parsed = fnArgs.map((v, i) => parseArg(v, currentFn.inputs[i].type));
       const data = TARGET_IFACE.encodeFunctionData(currentFn.name, parsed);
-      return { calldata: data, calldataError: null };
+      return { calldata: data, calldataError: null, starkSelector: null, starkCalldata: null };
     } catch (e) {
-      return { calldata: null, calldataError: e instanceof Error ? e.message : String(e) };
+      return { calldata: null, calldataError: e instanceof Error ? e.message : String(e), starkSelector: null, starkCalldata: null };
     }
-  }, [currentFn, fnArgs]);
+  }, [currentFn, fnArgs, chainType]);
 
   // ── Timelock params ───────────────────────────────────────────────────────
   const [delay,       setDelay]       = useState('172800');
   const [salt,        setSalt]        = useState(randomSalt());
   const [predecessor, setPredecessor] = useState('0x0000000000000000000000000000000000000000000000000000000000000000');
 
+  // ── EVM: remember last-good calldata for execute after the form clears ────
   const [lastCalldata, setLastCalldata] = useState<string | null>(null);
   useEffect(() => { if (calldata) setLastCalldata(calldata); }, [calldata]);
   const execCalldata = calldata ?? lastCalldata;
 
-  const freshOpHash = execCalldata && timelockAddr
+  // ── Starknet: remember last-good selector + calldata felts ────────────────
+  const [lastStarkSelector, setLastStarkSelector] = useState<string | null>(null);
+  const [lastStarkCalldata, setLastStarkCalldata] = useState<string[] | null>(null);
+  useEffect(() => { if (starkSelector) setLastStarkSelector(starkSelector); }, [starkSelector]);
+  useEffect(() => { if (starkCalldata) setLastStarkCalldata(starkCalldata); }, [starkCalldata]);
+  const execStarkSelector = starkSelector ?? lastStarkSelector;
+  const execStarkCalldata = starkCalldata ?? lastStarkCalldata;
+
+  // ── Operation hash ────────────────────────────────────────────────────────
+  const evmFreshOpHash = chainType === 'evm' && execCalldata && timelockAddr
     ? localHashOp(timelockAddr, 0n, execCalldata, predecessor, salt)
     : null;
+
+  const [starkOpHash, setStarkOpHash] = useState<string | null>(null);
+  const [opHashError, setOpHashError] = useState<string | null>(null);
+  const starkCalldataKey = execStarkCalldata?.join(',') ?? '';
+  useEffect(() => {
+    if (chainType !== 'starknet') { setStarkOpHash(null); setOpHashError(null); return; }
+    if (!timelockAddr || !execStarkSelector || !execStarkCalldata) { setStarkOpHash(null); setOpHashError(null); return; }
+    let cancelled = false;
+    setOpHashError(null);
+    const timer = setTimeout(async () => {
+      try {
+        const h = await cairoOps.hashOperation(timelockAddr, timelockAddr, execStarkSelector, execStarkCalldata, predecessor, salt, starkChain.rpc);
+        if (!cancelled) setStarkOpHash(h);
+      } catch (e) {
+        if (!cancelled) { setStarkOpHash(null); setOpHashError(e instanceof Error ? e.message : String(e)); }
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainType, timelockAddr, execStarkSelector, starkCalldataKey, predecessor, salt, starkChain.rpc]);
+
+  const freshOpHash = chainType === 'starknet' ? starkOpHash : evmFreshOpHash;
   const [lastOpHash, setLastOpHash] = useState<string | null>(null);
   useEffect(() => { if (freshOpHash) setLastOpHash(freshOpHash); }, [freshOpHash]);
   const opHash = freshOpHash ?? lastOpHash;
@@ -209,27 +316,29 @@ export function Timelock(): JSX.Element {
   // ── Handlers ──────────────────────────────────────────────────────────────
   async function loadMinDelay(): Promise<void> {
     if (!timelockAddr) return;
-    if (chainType === 'starknet') {
-      const d = await cairoOps.getMinDelay(timelockAddr, starkChain.rpc);
+    setMinDelayError(null);
+    try {
+      const d = chainType === 'starknet'
+        ? await cairoOps.getMinDelay(timelockAddr, starkChain.rpc)
+        : await ops.getMinDelay(timelockAddr, evm.provider ?? undefined);
       setMinDelay(formatDelay(Number(d)));
       setDelay(String(d));
-    } else {
-      const d = await ops.getMinDelay(timelockAddr, evm.provider ?? undefined);
-      setMinDelay(formatDelay(Number(d)));
-      setDelay(String(d));
+    } catch (e) {
+      setMinDelay('');
+      setMinDelayError(e instanceof Error ? e.message : String(e));
     }
   }
 
   async function handleSchedule(): Promise<void> {
-    if (!timelockAddr || !calldata) return;
+    if (!timelockAddr) return;
     setScheduleTx({ status: 'pending' });
     if (chainType === 'starknet') {
-      // Cairo schedule expects Call struct {to, selector, calldata}
-      // Target = the timelock itself (same as EVM pattern), selector from the encoded calldata
-      const fnSelector = calldata.slice(0, 10); // first 4 bytes as selector
-      const result = await cairoOps.schedule(timelockAddr, timelockAddr, fnSelector, [calldata], predecessor, salt, Number(delay));
+      if (!starkSelector || !starkCalldata) { setScheduleTx({ status: 'error', message: 'Starknet calldata not ready' }); return; }
+      // Target = timelock itself — same pattern as EVM (admin gateway)
+      const result = await cairoOps.schedule(timelockAddr, timelockAddr, starkSelector, starkCalldata, toFeltHex(predecessor), toFeltHex(salt), Number(delay));
       setScheduleTx(result);
     } else {
+      if (!calldata) { setScheduleTx({ status: 'error', message: 'EVM calldata not ready' }); return; }
       const result = await ops.schedule(timelockAddr, 0n, calldata, predecessor, salt, BigInt(delay));
       setScheduleTx(result);
     }
@@ -240,13 +349,14 @@ export function Timelock(): JSX.Element {
     setOpState(null); setOpEta(null); setLookupDebug(null); setLookupError(null);
     try {
       if (chainType === 'starknet') {
-        const state = await cairoOps.getOperationState(timelockAddr, lookupHash, starkChain.rpc);
+        const id = toFeltHex(lookupHash);
+        const state = await cairoOps.getOperationState(timelockAddr, id, starkChain.rpc);
         setOpState(state);
         if (state === 'Waiting') {
-          const ts = await cairoOps.getTimestamp(timelockAddr, lookupHash, starkChain.rpc);
+          const ts = await cairoOps.getTimestamp(timelockAddr, id, starkChain.rpc);
           setOpEta(formatCountdown(Number(ts)));
         }
-        setLookupDebug(`contract: ${timelockAddr} | hash: ${lookupHash.slice(0, 14)}… | chain: ${starkChain.name}`);
+        setLookupDebug(`contract: ${timelockAddr} | id: ${id.slice(0, 14)}… | chain: ${starkChain.name}`);
       } else {
         const wp = evm.provider ?? undefined;
         const ts = await ops.getTimestamp(timelockAddr, lookupHash, wp);
@@ -269,16 +379,17 @@ export function Timelock(): JSX.Element {
 
   async function handleExecute(): Promise<void> {
     const target = derivedTarget ?? timelockAddr;
-    const data = derivedCalldata ?? execCalldata;
     const pred = derivedPredecessor ?? predecessor;
     const s = derivedSalt ?? salt;
-    if (!target || !data) return;
+    if (!target) return;
     setExecuteTx({ status: 'pending' });
     if (chainType === 'starknet') {
-      const fnSelector = data.slice(0, 10);
-      const result = await cairoOps.execute(timelockAddr, target, fnSelector, [data], pred, s);
+      if (!execStarkSelector || !execStarkCalldata) { setExecuteTx({ status: 'error', message: 'Fill in the scheduled function form to execute.' }); return; }
+      const result = await cairoOps.execute(timelockAddr, target, execStarkSelector, execStarkCalldata, toFeltHex(pred), toFeltHex(s));
       setExecuteTx(result);
     } else {
+      const data = derivedCalldata ?? execCalldata;
+      if (!data) { setExecuteTx({ status: 'error', message: 'EVM calldata not ready' }); return; }
       const result = await ops.execute(target, 0n, data, pred, s);
       setExecuteTx(result);
     }
@@ -317,7 +428,7 @@ export function Timelock(): JSX.Element {
     if (!timelockAddr || !lookupHash) return;
     setCancelTx({ status: 'pending' });
     if (chainType === 'starknet') {
-      setCancelTx(await cairoOps.cancel(timelockAddr, lookupHash));
+      setCancelTx(await cairoOps.cancel(timelockAddr, toFeltHex(lookupHash)));
     } else {
       setCancelTx(await ops.cancel(timelockAddr, lookupHash));
     }
@@ -457,21 +568,26 @@ export function Timelock(): JSX.Element {
               Min delay: <strong className="text-on-surface">{minDelay}</strong>
             </div>
           )}
+          {minDelayError && (
+            <div className="mt-3 text-xs text-error break-all">Error: {minDelayError}</div>
+          )}
         </Section>
 
         {/* Schedule Operation */}
         <Section icon="add_circle" title="Schedule Operation" subtitle="Encode and schedule a timelock operation">
 
-          {WRITE_FUNCTIONS.length === 0 ? (
+          {uiFunctions.length === 0 ? (
             <div className="text-xs text-on-surface-variant bg-surface-container rounded-lg p-4 border border-outline-variant/10">
-              No write functions found in <span className="font-mono">src/config/timelockTarget.json</span>. Replace the ABI with your contract's ABI.
+              {chainType === 'starknet'
+                ? <>No write functions found in <span className="font-mono">src/config/timelockTargetStarknet.json</span>. Populate the <span className="font-mono">abi</span> field with your Cairo contract's ABI.</>
+                : <>No write functions found in <span className="font-mono">src/config/timelockTarget.json</span>. Replace the ABI with your contract's ABI.</>}
             </div>
           ) : (
             <>
               <div className="mb-4">
                 <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Function</div>
                 <select className="input" value={selectedFn} onChange={(e) => setSelectedFn(e.target.value)}>
-                  {WRITE_FUNCTIONS.map((f) => (
+                  {uiFunctions.map((f) => (
                     <option key={f.name} value={f.name}>{f.name}</option>
                   ))}
                 </select>
@@ -486,7 +602,7 @@ export function Timelock(): JSX.Element {
                         {input.name || `arg${i}`}
                         <span className="ml-1.5 normal-case text-primary/60 font-normal">({input.type})</span>
                       </div>
-                      {selectedFn === 'setVaultState' && input.name === 'state' ? (
+                      {chainType === 'evm' && selectedFn === 'setVaultState' && input.name === 'state' ? (
                         <select
                           className="input"
                           value={fnArgs[i] ?? '0'}
@@ -504,7 +620,9 @@ export function Timelock(): JSX.Element {
                           value={fnArgs[i] ?? ''}
                           onChange={(e) => setArg(i, e.target.value)}
                           spellCheck={false}
-                          placeholder={input.type === 'address' ? '0x…' : input.type.startsWith('uint') ? '0' : ''}
+                          placeholder={chainType === 'starknet'
+                            ? starkArgPlaceholder(input.type)
+                            : input.type === 'address' ? '0x…' : input.type.startsWith('uint') ? '0' : ''}
                         />
                       )}
                     </div>
@@ -546,6 +664,21 @@ export function Timelock(): JSX.Element {
                 <div className="font-mono text-[11px] text-on-surface-variant break-all">{calldata}</div>
               </div>
             )}
+            {chainType === 'starknet' && starkSelector && starkCalldata && (
+              <div className="mb-3 space-y-2">
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Selector (sn_keccak)</div>
+                  <div className="font-mono text-[11px] text-on-surface-variant break-all">{starkSelector}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Calldata ({starkCalldata.length} felts)</div>
+                  <div className="font-mono text-[11px] text-on-surface-variant break-all">[{starkCalldata.join(', ')}]</div>
+                </div>
+              </div>
+            )}
+            {chainType === 'starknet' && opHashError && (
+              <div className="text-xs text-error mb-3 break-all">Op hash error: {opHashError}</div>
+            )}
             {opHash && (
               <div className="bg-surface-container rounded-lg p-4 border border-primary/10">
                 <div className="flex items-center justify-between mb-2">
@@ -568,7 +701,9 @@ export function Timelock(): JSX.Element {
               <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
             ) : (
               <button className="btn btn-primary" onClick={handleSchedule}
-                disabled={chainType === 'starknet' ? !stark.isConnected || !calldata : !evm.isConnected || !calldata}>
+                disabled={chainType === 'starknet'
+                  ? !stark.isConnected || !starkSelector || !starkCalldata
+                  : !evm.isConnected || !calldata}>
                 Schedule{chainType === 'starknet' ? ' (Starknet)' : ''}
               </button>
             )}
@@ -579,24 +714,32 @@ export function Timelock(): JSX.Element {
         {/* Check Operation State */}
         <Section icon="search" title="Check Operation State" subtitle="Lookup operation status by hash">
 
-          <div className="bg-surface-container rounded-lg p-4 mb-5">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">Derive hash from schedule tx hash</div>
-            <div className="flex gap-2 items-end">
-              <input className="input flex-1" placeholder="0x… (transaction hash of the schedule call)"
-                value={deriveTxHash} onChange={(e) => setDeriveTxHash(e.target.value)} />
-              <button className="btn" onClick={handleDeriveFromTx} disabled={deriving || !deriveTxHash}>
-                {deriving ? 'Fetching…' : 'Derive'}
-              </button>
+          {chainType === 'evm' ? (
+            <div className="bg-surface-container rounded-lg p-4 mb-5">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">Derive hash from schedule tx hash</div>
+              <div className="flex gap-2 items-end">
+                <input className="input flex-1" placeholder="0x… (transaction hash of the schedule call)"
+                  value={deriveTxHash} onChange={(e) => setDeriveTxHash(e.target.value)} />
+                <button className="btn" onClick={handleDeriveFromTx} disabled={deriving || !deriveTxHash}>
+                  {deriving ? 'Fetching…' : 'Derive'}
+                </button>
+              </div>
+              {deriveError && <div className="text-xs text-error mt-2">{deriveError}</div>}
+              <div className="text-[11px] text-on-surface-variant mt-2 opacity-60">
+                Reads the CallScheduled event from the tx receipt and extracts the operation id
+              </div>
             </div>
-            {deriveError && <div className="text-xs text-error mt-2">{deriveError}</div>}
-            <div className="text-[11px] text-on-surface-variant mt-2 opacity-60">
-              Reads the CallScheduled event from the tx receipt and extracts the operation id
+          ) : (
+            <div className="bg-surface-container rounded-lg p-4 mb-5 text-[11px] text-on-surface-variant opacity-70">
+              Derive-from-tx is EVM-only. Paste the operation id (felt252) directly below to look up a Starknet operation.
             </div>
-          </div>
+          )}
 
           <div className="flex gap-2 items-end">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Operation hash (bytes32)</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">
+                Operation hash ({chainType === 'starknet' ? 'felt252' : 'bytes32'})
+              </div>
               <input className="input" value={lookupHash} onChange={(e) => setLookupHash(e.target.value)} />
             </div>
             <button className="btn" onClick={handleLookup} disabled={!timelockAddr || !lookupHash}>Lookup</button>
@@ -615,8 +758,11 @@ export function Timelock(): JSX.Element {
                 {opState === 'Ready' && !wrongChain && (
                   <div className="flex flex-col gap-1">
                     <button className="btn btn-primary" onClick={handleExecute}
-                      disabled={chainType === 'starknet' ? !stark.isConnected || !derivedCalldata : !evm.isConnected || !derivedCalldata}>Execute</button>
-                    {(chainType === 'evm' ? evm.isConnected : stark.isConnected) && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
+                      disabled={chainType === 'starknet'
+                        ? !stark.isConnected || (!execStarkSelector || !execStarkCalldata)
+                        : !evm.isConnected || !derivedCalldata}>Execute</button>
+                    {chainType === 'evm' && evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
+                    {chainType === 'starknet' && stark.isConnected && (!execStarkSelector || !execStarkCalldata) && <span className="text-[11px] text-on-surface-variant">Re-enter the scheduled function + args to execute</span>}
                   </div>
                 )}
                 {(opState === 'Waiting' || opState === 'Ready') && !wrongChain && (
@@ -628,7 +774,7 @@ export function Timelock(): JSX.Element {
                 )}
                 {opState === 'Done' && <span className="text-xs text-on-surface-variant">Already executed — nothing to do</span>}
               </div>
-              {derivedCalldata && (() => {
+              {chainType === 'evm' && derivedCalldata && (() => {
                 const decoded = decodeCalldata(derivedCalldata);
                 return (
                   <div className="text-[11px] leading-relaxed">
@@ -649,6 +795,35 @@ export function Timelock(): JSX.Element {
                       <div>predecessor: {derivedPredecessor}</div>
                       <div>salt: {derivedSalt ?? '(from form)'}</div>
                       {!decoded && <div>calldata: {derivedCalldata.slice(0, 18)}…</div>}
+                    </div>
+                  </div>
+                );
+              })()}
+              {chainType === 'starknet' && execStarkSelector && execStarkCalldata && (() => {
+                const decoded = decodeStarknetCall(execStarkSelector, execStarkCalldata, STARK_DECODE_ABIS);
+                return (
+                  <div className="text-[11px] leading-relaxed">
+                    {decoded ? (
+                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2">
+                        <div className="label mb-1">Decoded</div>
+                        <div className="text-primary font-semibold font-mono">{decoded.fn}()</div>
+                        <div className="text-[10px] text-on-surface-variant mb-1">{decoded.contract}</div>
+                        {Object.entries(decoded.args).map(([k, v]) => (
+                          <div key={k} className="font-mono text-on-surface-variant">
+                            <span className="text-on-surface">{k}</span>: {v}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2 text-on-surface-variant">
+                        Unknown selector — not matched against loaded Cairo ABIs.
+                      </div>
+                    )}
+                    <div className="font-mono text-on-surface-variant">
+                      <div>target: {timelockAddr}</div>
+                      <div>selector: {execStarkSelector}</div>
+                      <div>predecessor: {predecessor}</div>
+                      <div>salt: {salt}</div>
                     </div>
                   </div>
                 );

@@ -13,6 +13,30 @@ function normalizeStarkAddr(addr: string): string {
   try { return validateAndParseAddress(addr); } catch { return addr; }
 }
 
+/** Classify a Starknet RPC error into a kind the caller can branch on. */
+function classifyStarkRpcError(e: unknown): 'entrypoint_missing' | 'contract_missing' | 'rpc_error' {
+  const msg = String((e as Error)?.message ?? e).toLowerCase();
+  if (msg.includes('entrypoint') || msg.includes('entry point') || msg.includes('not exist in the contract')) return 'entrypoint_missing';
+  if ((msg.includes('contract') && msg.includes('not found')) || msg.includes('class hash')) return 'contract_missing';
+  return 'rpc_error';
+}
+
+/** Retry an RPC call up to 3 times with exponential backoff on transient RPC errors.
+ *  Does NOT retry on entrypoint_missing or contract_missing — those are deterministic. */
+async function retryOnRpcFlake<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      const kind = classifyStarkRpcError(e);
+      if (kind !== 'rpc_error') throw e;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /** Run a list of async tasks with bounded concurrency. Used to avoid hammering Stark RPCs. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
   const results: PromiseSettledResult<R>[] = new Array(items.length);
@@ -95,7 +119,15 @@ export interface CairoOFTOps {
   /** Read OFT balance for a Starknet account */
   cairoBalance: (cairoOftAddr: string, owner: string, rpc: string) => Promise<bigint>;
   readCairoTokenInfo: (addr: string, rpc: string) => Promise<{ name: string; symbol: string }>;
-  detectCairoOFTType: (addr: string, rpc: string) => Promise<{ type: 'adapter' | 'oft'; tokenAddr: string | null }>;
+  /** Read ERC20 decimals() from a Cairo token. Returns null if the call fails or the entrypoint is missing. */
+  readCairoTokenDecimals: (addr: string, rpc: string) => Promise<number | null>;
+  detectCairoOFTType: (addr: string, rpc: string) => Promise<{ type: 'adapter' | 'oft' | 'unknown'; tokenAddr: string | null; error: string | null }>;
+  /** Read outbound rate limit for a Starknet OFT adapter (ignoring amount_in_flight / last_updated). */
+  readOutboundRateLimit: (cairoOftAddr: string, dstEid: number, rpc: string) => Promise<{ limit: bigint; window: number } | null>;
+  /** Read inbound rate limit. */
+  readInboundRateLimit: (cairoOftAddr: string, srcEid: number, rpc: string) => Promise<{ limit: bigint; window: number } | null>;
+  /** Write outbound rate limit for (dst_eid). Passes direction=Outbound. */
+  setCairoRateLimit: (cairoOftAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
 }
 
 export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
@@ -356,26 +388,136 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     }
   }, []);
 
-  /**
-   * Detect whether a Starknet OFT contract is an Adapter (has token()) or a native OFT.
-   * Returns the underlying token address if adapter, null if OFT.
-   */
-  const detectCairoOFTType = useCallback(async (addr: string, rpc: string): Promise<{ type: 'adapter' | 'oft'; tokenAddr: string | null }> => {
+  const readCairoTokenDecimals = useCallback(async (addr: string, rpc: string): Promise<number | null> => {
     const provider = new RpcProvider({ nodeUrl: rpc });
     try {
-      const result = await provider.callContract({ contractAddress: normalizeStarkAddr(addr), entrypoint: 'token', calldata: [] });
-      const tokenAddr = result[0];
-      if (!tokenAddr || tokenAddr === '0x0') return { type: 'oft', tokenAddr: null };
-      // If token() returns the contract's own address, it's an OFT; otherwise it's an adapter
-      const selfNorm = BigInt(addr);
-      const tokenNorm = BigInt(tokenAddr);
-      if (selfNorm === tokenNorm) return { type: 'oft', tokenAddr: null };
-      return { type: 'adapter', tokenAddr: normalizeStarkAddr(tokenAddr) };
+      const result = await retryOnRpcFlake(() =>
+        provider.callContract({
+          contractAddress: normalizeStarkAddr(addr),
+          entrypoint: 'decimals',
+          calldata: [],
+        }),
+      );
+      const raw = BigInt(result[0] ?? '0');
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= 0 && n <= 32 ? n : null;
     } catch {
-      // token() not found → it's a plain OFT without the adapter interface
-      return { type: 'oft', tokenAddr: null };
+      return null;
     }
   }, []);
 
-  return { readPeer, readAllPeers, readEnforcedOptions, setPeer, cairoQuoteSend, cairoApprove, cairoSend, cairoBalance, readCairoTokenInfo, detectCairoOFTType };
+  /**
+   * Detect whether a Starknet OFT contract is an Adapter (has token()) or a native OFT.
+   *
+   * Distinguishes three outcomes:
+   *  - 'adapter' — token() returned a different address (the underlying ERC20)
+   *  - 'oft'     — token() returned self OR is missing, but oft_version() succeeds
+   *  - 'unknown' — neither token() nor oft_version() resolved (RPC failure, wrong network, or non-OFT)
+   *
+   * `error` carries the reason on 'unknown', or a soft warning (e.g. "RPC flaked, assumed OFT").
+   */
+  const detectCairoOFTType = useCallback(async (addr: string, rpc: string): Promise<{ type: 'adapter' | 'oft' | 'unknown'; tokenAddr: string | null; error: string | null }> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
+    const normalized = normalizeStarkAddr(addr);
+
+    // 1. Try token() with retries on transient RPC errors. Entrypoint-missing fails fast.
+    let tokenErr: 'entrypoint_missing' | 'contract_missing' | 'rpc_error' | null = null;
+    try {
+      const result = await retryOnRpcFlake(() =>
+        provider.callContract({ contractAddress: normalized, entrypoint: 'token', calldata: [] }),
+      );
+      const tokenAddr = result[0];
+      if (!tokenAddr || tokenAddr === '0x0') return { type: 'oft', tokenAddr: null, error: null };
+      if (BigInt(normalized) === BigInt(tokenAddr)) return { type: 'oft', tokenAddr: null, error: null };
+      return { type: 'adapter', tokenAddr: normalizeStarkAddr(tokenAddr), error: null };
+    } catch (e) {
+      tokenErr = classifyStarkRpcError(e);
+      if (tokenErr === 'contract_missing') {
+        return { type: 'unknown', tokenAddr: null, error: 'Contract not deployed at this address on the selected network' };
+      }
+    }
+
+    // 2. token() didn't resolve — probe oft_version() as a liveness + OFT-ness check.
+    try {
+      await retryOnRpcFlake(() =>
+        provider.callContract({ contractAddress: normalized, entrypoint: 'oft_version', calldata: [] }),
+      );
+      // It is an OFT; the earlier token() failure was either entrypoint-missing (plain OFT) or a persistent RPC flake.
+      const softError = tokenErr === 'rpc_error' ? 'token() RPC still flaky after retries — treated as plain OFT' : null;
+      return { type: 'oft', tokenAddr: null, error: softError };
+    } catch (e) {
+      const kind2 = classifyStarkRpcError(e);
+      if (kind2 === 'contract_missing') {
+        return { type: 'unknown', tokenAddr: null, error: 'Contract not deployed at this address on the selected network' };
+      }
+      if (kind2 === 'entrypoint_missing' && tokenErr === 'entrypoint_missing') {
+        return { type: 'unknown', tokenAddr: null, error: 'Not an OFT — contract exposes neither token() nor oft_version()' };
+      }
+      const reason = String((e as Error)?.message ?? e).split('\n')[0].slice(0, 200);
+      return { type: 'unknown', tokenAddr: null, error: `Starknet RPC flaking — try another RPC in Settings. (${reason})` };
+    }
+  }, []);
+
+  /** Shared helper for rate-limit entrypoints. Returns null on entrypoint_missing; propagates other errors. */
+  const readRateLimitEntrypoint = async (
+    cairoOftAddr: string, eid: number, rpc: string, entrypoint: 'get_outbound_rate_limit' | 'get_inbound_rate_limit',
+  ): Promise<{ limit: bigint; window: number } | null> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
+    try {
+      // RateLimit struct = [amount_in_flight: u128, last_updated: u64, limit: u128, window: u64]
+      const result = await retryOnRpcFlake(() =>
+        provider.callContract({
+          contractAddress: normalizeStarkAddr(cairoOftAddr),
+          entrypoint,
+          calldata: CallData.compile([eid]),
+        }),
+      );
+      const limit = BigInt(result[2] ?? '0');
+      const window = Number(BigInt(result[3] ?? '0'));
+      return { limit, window };
+    } catch (e) {
+      if (classifyStarkRpcError(e) === 'entrypoint_missing') return null;
+      throw e;
+    }
+  };
+
+  const readOutboundRateLimit = useCallback((cairoOftAddr: string, dstEid: number, rpc: string) =>
+    readRateLimitEntrypoint(cairoOftAddr, dstEid, rpc, 'get_outbound_rate_limit'), []);
+
+  const readInboundRateLimit = useCallback((cairoOftAddr: string, srcEid: number, rpc: string) =>
+    readRateLimitEntrypoint(cairoOftAddr, srcEid, rpc, 'get_inbound_rate_limit'), []);
+
+  const setCairoRateLimit = useCallback(async (
+    cairoOftAddr: string, dstEid: number, limit: bigint, window: number,
+  ): Promise<TxState> => {
+    if (!account) return { status: 'error', message: 'Starknet wallet not connected' };
+    try {
+      // set_rate_limits(rate_limits: Array<RateLimitConfig>, direction: RateLimitDirection)
+      // Flat felt layout:
+      //   [array_len, dst_eid, limit, window, direction_variant_idx (0=Outbound, 1=Inbound)]
+      const calldata = [
+        '0x1',                                      // array length = 1
+        '0x' + dstEid.toString(16),                 // dst_eid: u32
+        '0x' + limit.toString(16),                  // limit: u128
+        '0x' + window.toString(16),                 // window: u64
+        '0x0',                                      // RateLimitDirection::Outbound
+      ];
+      const response = await account.execute([{
+        contractAddress: normalizeStarkAddr(cairoOftAddr),
+        entrypoint: 'set_rate_limits',
+        calldata,
+      }]);
+      await account.waitForTransaction(response.transaction_hash);
+      return { status: 'success', hash: response.transaction_hash };
+    } catch (e) {
+      return { status: 'error', message: decodeContractError(e), details: extractErrorDetails(e, { contractAddr: cairoOftAddr, functionName: 'set_rate_limits', functionCall: `set_rate_limits([{ dst_eid: ${dstEid}, limit: ${limit}, window: ${window} }], Outbound)` }) };
+    }
+  }, [account]);
+
+  return {
+    readPeer, readAllPeers, readEnforcedOptions, setPeer,
+    cairoQuoteSend, cairoApprove, cairoSend, cairoBalance,
+    readCairoTokenInfo, readCairoTokenDecimals, detectCairoOFTType,
+    readOutboundRateLimit, readInboundRateLimit, setCairoRateLimit,
+  };
 }

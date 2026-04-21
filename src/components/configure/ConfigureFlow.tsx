@@ -83,9 +83,10 @@ interface CairoSideState {
   peer: boolean;
   sendDvn: boolean;
   recvDvn: boolean;
+  rateLimit: boolean;
 }
 
-const EMPTY_CAIRO: CairoSideState = { delegate: false, sendLib: false, recvLib: false, enforcedOptions: false, peer: false, sendDvn: false, recvDvn: false };
+const EMPTY_CAIRO: CairoSideState = { delegate: false, sendLib: false, recvLib: false, enforcedOptions: false, peer: false, sendDvn: false, recvDvn: false, rateLimit: false };
 
 // ── Derive step statuses from verify result + cairo reads ───────────────────
 
@@ -142,7 +143,9 @@ function deriveStatuses(
       remote: remoteCheck('options', checkLabel('Enforced options set (receive side)'), remoteCairo.enforcedOptions),
     },
     rateLimit: {
-      home: fromTxOrVerify('rateLimit', 'home', !!vr?.homeRateLimit),
+      home: homeCheck('rateLimit',
+        !!vr?.homeRateLimit && vr.homeRateLimit.limit > 0n,
+        homeCairo.rateLimit),
       remote: 'configured',
     },
     peers: {
@@ -184,7 +187,8 @@ export function ConfigureFlow({
   const remoteSide = buildSide(remote, remoteAddr, false, evm, stark);
 
   const hooks: ConfigHooks = { wiring, cairoEndpoint, cairo, evm, stark };
-  const steps = buildStepDefs(isAdapter && homeSide.kind === 'evm');
+  // Show rate-limit step for any adapter home (EVM or Starknet) — the step component branches internally.
+  const steps = buildStepDefs(isAdapter);
 
   // ── Read Starknet on-chain state for progress tracking ──────────────────
   const ZERO64 = '0x' + '0'.repeat(64);
@@ -212,12 +216,13 @@ export function ConfigureFlow({
       const rpc = starkChain.rpc;
       const ep = starkChain.endpoint;
       try {
-        const [delegate, sendLib, recvLibResult, enforcedOpts, peerResult] = await Promise.allSettled([
+        const [delegate, sendLib, recvLibResult, enforcedOpts, peerResult, rateLimit] = await Promise.allSettled([
           ce.readDelegate(ep, contractAddr, rpc),
           ce.readSendLibrary(ep, contractAddr, remoteEid, rpc),
           ce.readReceiveLibrary(ep, contractAddr, remoteEid, rpc),
           co.readEnforcedOptions(contractAddr, remoteEid, rpc),
           co.readPeer(contractAddr, remoteEid, rpc),
+          co.readOutboundRateLimit(contractAddr, remoteEid, rpc),
         ]);
         if (tick !== cairoReadRef.current) return; // stale
 
@@ -260,6 +265,7 @@ export function ConfigureFlow({
           peer: peerResult.status === 'fulfilled' && !!(peerResult.value as any)?.peer && (peerResult.value as any).peer !== ZERO64,
           sendDvn,
           recvDvn,
+          rateLimit: rateLimit.status === 'fulfilled' && rateLimit.value !== null && rateLimit.value.limit > 0n,
         });
         prefillSetter({ sendDvns: sendDvnAddrs, recvDvns: recvDvnAddrs, executor, confirmations });
       } catch { /* ignore */ }

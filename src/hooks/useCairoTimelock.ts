@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
-import { RpcProvider, Contract, CallData, hash } from 'starknet';
-import type { WalletAccount } from 'starknet';
+import { RpcProvider, CallData, hash } from 'starknet';
+import type { WalletAccount, Abi } from 'starknet';
 import type { TxState, OperationState } from '@/types';
 import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import TimelockABI from '@/abis/svm/TimelockController.json';
+
+const TIMELOCK_CALLDATA = new CallData(TimelockABI as Abi);
 
 /** Starknet sn_keccak: keccak256 masked to 250 bits. */
 function snKeccakRole(name: string): string {
@@ -27,6 +29,7 @@ export interface CairoTimelockOps {
   getMinDelay: (addr: string, rpc: string) => Promise<bigint>;
   getOperationState: (addr: string, id: string, rpc: string) => Promise<OperationState>;
   getTimestamp: (addr: string, id: string, rpc: string) => Promise<bigint>;
+  hashOperation: (addr: string, target: string, selector: string, calldata: string[], predecessor: string, salt: string, rpc: string) => Promise<string>;
   checkRoles: (addr: string, account: string, rpc: string) => Promise<{
     proposer: boolean; executor: boolean; canceller: boolean; admin: boolean;
   }>;
@@ -38,13 +41,26 @@ export interface CairoTimelockOps {
   roleSelectors: typeof ROLE_SELECTORS;
 }
 
+function compileCallArgs(target: string, selector: string, calldata: string[], predecessor: string, salt: string, delay?: number): string[] {
+  const payload = {
+    call: { to: target, selector, calldata },
+    predecessor: predecessor || '0x0',
+    salt,
+    ...(delay !== undefined ? { delay } : {}),
+  };
+  return TIMELOCK_CALLDATA.compile(delay !== undefined ? 'schedule' : 'execute', payload);
+}
+
 export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOps {
 
   const getMinDelay = useCallback(async (addr: string, rpc: string): Promise<bigint> => {
     const provider = new RpcProvider({ nodeUrl: rpc });
-    const c = new Contract(TimelockABI as never[], addr, provider);
-    const result = await c.call('get_min_delay', []);
-    return BigInt(String(result));
+    const result = await provider.callContract({
+      contractAddress: addr,
+      entrypoint: 'get_min_delay',
+      calldata: [],
+    });
+    return BigInt(result[0]);
   }, []);
 
   const getOperationState = useCallback(async (addr: string, id: string, rpc: string): Promise<OperationState> => {
@@ -54,25 +70,56 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       entrypoint: 'get_operation_state',
       calldata: CallData.compile([id]),
     });
-    // The enum variant index is the first felt
     return stateFromNum(Number(result[0]));
   }, []);
 
   const getTimestamp = useCallback(async (addr: string, id: string, rpc: string): Promise<bigint> => {
     const provider = new RpcProvider({ nodeUrl: rpc });
-    const c = new Contract(TimelockABI as never[], addr, provider);
-    const result = await c.call('get_timestamp', [id]);
-    return BigInt(String(result));
+    const result = await provider.callContract({
+      contractAddress: addr,
+      entrypoint: 'get_timestamp',
+      calldata: CallData.compile([id]),
+    });
+    return BigInt(result[0]);
+  }, []);
+
+  const hashOperation = useCallback(async (
+    addr: string, target: string, selector: string, calldata: string[],
+    predecessor: string, salt: string, rpc: string,
+  ): Promise<string> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
+    const args = TIMELOCK_CALLDATA.compile('hash_operation', {
+      call: { to: target, selector, calldata },
+      predecessor: predecessor || '0x0',
+      salt,
+    });
+    const result = await provider.callContract({
+      contractAddress: addr,
+      entrypoint: 'hash_operation',
+      calldata: args,
+    });
+    return result[0];
   }, []);
 
   const checkRoles = useCallback(async (addr: string, walletAddr: string, rpc: string) => {
     const provider = new RpcProvider({ nodeUrl: rpc });
-    const c = new Contract(TimelockABI as never[], addr, provider);
+    const check = async (role: string): Promise<boolean> => {
+      try {
+        const r = await provider.callContract({
+          contractAddress: addr,
+          entrypoint: 'has_role',
+          calldata: CallData.compile([role, walletAddr]),
+        });
+        return BigInt(r[0]) !== 0n;
+      } catch {
+        return false;
+      }
+    };
     const [proposer, executor, canceller, admin] = await Promise.all([
-      c.call('has_role', [ROLE_SELECTORS.proposer, walletAddr]).then((r) => Boolean(r)).catch(() => false),
-      c.call('has_role', [ROLE_SELECTORS.executor, walletAddr]).then((r) => Boolean(r)).catch(() => false),
-      c.call('has_role', [ROLE_SELECTORS.canceller, walletAddr]).then((r) => Boolean(r)).catch(() => false),
-      c.call('has_role', [ROLE_SELECTORS.admin, walletAddr]).then((r) => Boolean(r)).catch(() => false),
+      check(ROLE_SELECTORS.proposer),
+      check(ROLE_SELECTORS.executor),
+      check(ROLE_SELECTORS.canceller),
+      check(ROLE_SELECTORS.admin),
     ]);
     return { proposer, executor, canceller, admin };
   }, []);
@@ -86,12 +133,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       const response = await account.execute([{
         contractAddress: addr,
         entrypoint: 'schedule',
-        calldata: CallData.compile([
-          { to: target, selector, calldata },   // Call struct
-          predecessor || '0x0',                  // predecessor
-          salt,                                  // salt
-          delay,                                 // delay
-        ]),
+        calldata: compileCallArgs(target, selector, calldata, predecessor, salt, delay),
       }]);
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
@@ -109,11 +151,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       const response = await account.execute([{
         contractAddress: addr,
         entrypoint: 'execute',
-        calldata: CallData.compile([
-          { to: target, selector, calldata },
-          predecessor || '0x0',
-          salt,
-        ]),
+        calldata: compileCallArgs(target, selector, calldata, predecessor, salt),
       }]);
       await account.waitForTransaction(response.transaction_hash);
       return { status: 'success', hash: response.transaction_hash };
@@ -168,7 +206,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
   }, [account]);
 
   return {
-    getMinDelay, getOperationState, getTimestamp, checkRoles,
+    getMinDelay, getOperationState, getTimestamp, hashOperation, checkRoles,
     schedule, execute, cancel, grantRole, revokeRole,
     roleSelectors: ROLE_SELECTORS,
   };

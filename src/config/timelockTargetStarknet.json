@@ -1,0 +1,130 @@
+{
+  "description": "Cairo ABI for the Starknet contract you schedule against (usually the timelock itself or an admin gateway). Only 'external' state_mutability functions will appear in the Timelock operation builder. Populate this with the ABI of your target contract.",
+  "address": "",
+  "abi": [
+    {
+      "type": "function",
+      "name": "register_vault",
+      "inputs": [
+        {
+          "name": "_sy_vault",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "name": "_liquidity_pool",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "name": "_sy_share",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "name": "_sy_oft",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "core::integer::u256"
+        }
+      ],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_vault_oft",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_sy_oft",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_vault_state",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_new_state",
+          "type": "shift_core::types::types::VaultState"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_fee_recipient",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_fee_recipient",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_performance_fee_bps",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_bps",
+          "type": "core::integer::u256"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_maintenance_fee_bps",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_bps",
+          "type": "core::integer::u256"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    },
+    {
+      "type": "function",
+      "name": "set_fast_redeem_fee_bps",
+      "inputs": [
+        {
+          "name": "_vault_id",
+          "type": "core::integer::u256"
+        },
+        {
+          "name": "_bps",
+          "type": "core::integer::u256"
+        }
+      ],
+      "outputs": [],
+      "state_mutability": "external"
+    }
+  ]
+}

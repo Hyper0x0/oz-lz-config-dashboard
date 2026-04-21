@@ -9,6 +9,7 @@ import { SwitchChainButton } from '@/components/ChainSwitch';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
+import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
 import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import type { TxState } from '@/types';
 
@@ -92,10 +93,13 @@ const EVM_CHAINS = [
   { id: 84532,    name: 'Base Sepolia',      rpc: 'https://sepolia.base.org',                    explorer: 'sepolia.basescan.org',     isTestnet: true },
 ];
 
-const STARK_CHAINS: Record<'mainnet' | 'testnet', { id: string; name: string; rpc: string; explorer: string }> = {
-  mainnet: { id: 'SN_MAIN',    name: 'Starknet Mainnet', rpc: STARKNET_MAINNET.rpc, explorer: 'voyager.online' },
-  testnet: { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: STARKNET_TESTNET.rpc, explorer: 'sepolia.voyager.online' },
-};
+/** Resolve the Starknet chain entry with the user's RPC override from Settings applied at call time. */
+function resolveStarkChain(isTestnet: boolean): { id: string; name: string; rpc: string; explorer: string } {
+  if (isTestnet) {
+    return { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: getStarknetSepoliaRpc(STARKNET_TESTNET.rpc), explorer: 'sepolia.voyager.online' };
+  }
+  return { id: 'SN_MAIN', name: 'Starknet Mainnet', rpc: getStarknetMainnetRpc(STARKNET_MAINNET.rpc), explorer: 'voyager.online' };
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -112,7 +116,7 @@ export function Roles(): JSX.Element {
   // Testnet/Mainnet toggle — filters EVM chains and auto-sets Starknet chain
   const [isTestnet, setIsTestnet] = useState(true);
   const filteredChains = EVM_CHAINS.filter((c) => c.isTestnet === isTestnet);
-  const starkChain = isTestnet ? STARK_CHAINS.testnet : STARK_CHAINS.mainnet;
+  const starkChain = resolveStarkChain(isTestnet);
 
   // EVM chain selection
   const [activeChainId, setActiveChainId] = useState<number>(421614);

@@ -81,7 +81,7 @@ export function OFTs(): JSX.Element {
           if (t) { setDetectedHome(t); setMode(t === 'adapter' ? 'bridge-oft' : 'oft-oft'); }
         } else if (starkHome && homeValid) {
           const r = await cairo.detectCairoOFTType(homeAddr, starkHome.rpc).catch(() => null);
-          if (r) {
+          if (r && r.type !== 'unknown') {
             setDetectedHome(r.type);
             setMode(r.type === 'adapter' ? 'bridge-oft' : 'oft-oft');
             if (r.tokenAddr) setEvmUnderlyingToken(r.tokenAddr);
@@ -94,7 +94,7 @@ export function OFTs(): JSX.Element {
         } else if (isStarknet(remote) && remoteValid) {
           const starkR = remote as StarknetChain;
           const r = await cairo.detectCairoOFTType(remoteAddr, starkR.rpc).catch(() => null);
-          if (r) setDetectedRemote(r.type);
+          if (r && r.type !== 'unknown') setDetectedRemote(r.type);
         }
       } catch { setDetectedHome(null); setDetectedRemote(null); }
       finally { setDetecting(false); }

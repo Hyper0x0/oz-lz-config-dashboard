@@ -4,6 +4,28 @@ import type { WalletAccount } from 'starknet';
 import type { TxState } from '@/types';
 import { decodeContractError, extractErrorDetails } from '@/utils/decodeError';
 import { buildLzReceiveOption } from '@/utils/lzOptions';
+
+/** Classify a Starknet RPC error into a kind the caller can branch on. */
+function classifyStarkRpcError(e: unknown): 'entrypoint_missing' | 'contract_missing' | 'rpc_error' {
+  const msg = String((e as Error)?.message ?? e).toLowerCase();
+  if (msg.includes('entrypoint') || msg.includes('entry point') || msg.includes('not exist in the contract')) return 'entrypoint_missing';
+  if ((msg.includes('contract') && msg.includes('not found')) || msg.includes('class hash')) return 'contract_missing';
+  return 'rpc_error';
+}
+
+/** Retry an RPC call on transient errors (up to 3 attempts, 250ms/500ms/750ms backoff). */
+async function retryOnRpcFlake<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      if (classifyStarkRpcError(e) !== 'rpc_error') throw e;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
 import {
   CONFIG_TYPE_EXECUTOR, CONFIG_TYPE_ULN,
   type UlnConfigParams, type ExecutorConfigParams,
@@ -338,15 +360,16 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
   const readSendUlnConfig = useCallback(async (
     endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
   ): Promise<DecodedStarknetUln | null> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
     try {
-      const provider = new RpcProvider({ nodeUrl: rpc });
-      const result = await provider.callContract({
+      const result = await retryOnRpcFlake(() => provider.callContract({
         contractAddress: endpointAddr,
         entrypoint: 'get_send_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
-      });
+      }));
       return decodeStarknetUln(result);
-    } catch {
+    } catch (e) {
+      console.warn('[cairoEndpoint] readSendUlnConfig failed:', (e as Error)?.message ?? e);
       return null;
     }
   }, []);
@@ -354,15 +377,16 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
   const readSendExecutorConfig = useCallback(async (
     endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
   ): Promise<DecodedStarknetExecutor | null> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
     try {
-      const provider = new RpcProvider({ nodeUrl: rpc });
-      const result = await provider.callContract({
+      const result = await retryOnRpcFlake(() => provider.callContract({
         contractAddress: endpointAddr,
         entrypoint: 'get_send_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_EXECUTOR]),
-      });
+      }));
       return decodeStarknetExecutor(result);
-    } catch {
+    } catch (e) {
+      console.warn('[cairoEndpoint] readSendExecutorConfig failed:', (e as Error)?.message ?? e);
       return null;
     }
   }, []);
@@ -370,15 +394,16 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
   const readReceiveUlnConfig = useCallback(async (
     endpointAddr: string, oappAddr: string, libAddr: string, eid: number, rpc: string,
   ): Promise<DecodedStarknetUln | null> => {
+    const provider = new RpcProvider({ nodeUrl: rpc });
     try {
-      const provider = new RpcProvider({ nodeUrl: rpc });
-      const result = await provider.callContract({
+      const result = await retryOnRpcFlake(() => provider.callContract({
         contractAddress: endpointAddr,
         entrypoint: 'get_receive_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
-      });
+      }));
       return decodeStarknetUln(result);
-    } catch {
+    } catch (e) {
+      console.warn('[cairoEndpoint] readReceiveUlnConfig failed:', (e as Error)?.message ?? e);
       return null;
     }
   }, []);

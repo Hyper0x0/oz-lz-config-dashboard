@@ -13,12 +13,15 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
   const [tx, setTx] = useState<TxState>({ status: 'idle' });
   const [tokenDecimals, setTokenDecimals] = useState<number | null>(null);
   const [tokenSymbol, setTokenSymbol] = useState<string | null>(null);
+  const [starkRl, setStarkRl] = useState<{ limit: bigint; window: number } | null>(null);
 
-  const rl = verifyResult?.homeRateLimit;
+  const isStark = home.kind === 'starknet';
+  const evmRl = verifyResult?.homeRateLimit;
 
-  // Read token decimals + symbol from the adapter's underlying token
+  // EVM: read decimals + symbol from underlying ERC20
   useEffect(() => {
-    if (!home.contractAddr || home.contractAddr === '0x' || home.kind === 'starknet') return;
+    if (isStark) return;
+    if (!home.contractAddr || home.contractAddr === '0x') return;
     (async () => {
       try {
         const { Contract, JsonRpcProvider } = await import('ethers');
@@ -31,11 +34,39 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
         const [dec, sym] = await Promise.all([erc20.decimals(), erc20.symbol()]);
         setTokenDecimals(Number(dec));
         setTokenSymbol(sym as string);
-        // Auto-fill a sensible default if empty
         if (!limit) setLimit(String(BigInt(1_000_000) * BigInt(10 ** Number(dec))));
       } catch { /* not an adapter or read failed */ }
     })();
   }, [home.contractAddr, home.evmChain?.rpc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Starknet: read current outbound rate limit + underlying token info (symbol + decimals)
+  useEffect(() => {
+    if (!isStark) return;
+    if (!home.contractAddr || home.contractAddr === '0x' || !home.starkChain) return;
+    const rpc = home.starkChain.rpc;
+    const dstEid = remote.chain.eid;
+    (async () => {
+      try {
+        const rl = await hooks.cairo.readOutboundRateLimit(home.contractAddr, dstEid, rpc);
+        setStarkRl(rl);
+      } catch { setStarkRl(null); }
+      try {
+        const detect = await hooks.cairo.detectCairoOFTType(home.contractAddr, rpc);
+        if (detect.type === 'adapter' && detect.tokenAddr) {
+          const [info, dec] = await Promise.all([
+            hooks.cairo.readCairoTokenInfo(detect.tokenAddr, rpc),
+            hooks.cairo.readCairoTokenDecimals(detect.tokenAddr, rpc),
+          ]);
+          if (info.symbol) setTokenSymbol(info.symbol);
+          if (dec != null) {
+            setTokenDecimals(dec);
+            // Auto-fill 1M tokens default (same as EVM) once decimals are known
+            if (!limit) setLimit(String(BigInt(1_000_000) * BigInt(10 ** dec)));
+          }
+        }
+      } catch { /* token read is optional */ }
+    })();
+  }, [home.contractAddr, home.starkChain?.rpc, remote.chain.eid, isStark]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function formatTokenAmount(raw: bigint): string {
     if (tokenDecimals == null) return raw.toString();
@@ -46,22 +77,26 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
 
   async function handleSet(): Promise<void> {
     setTx({ status: 'pending' });
-    const result = await hooks.wiring.setRateLimit(home.contractAddr, remote.chain.eid, BigInt(limit), Number(window_));
+    const result = isStark
+      ? await hooks.cairo.setCairoRateLimit(home.contractAddr, remote.chain.eid, BigInt(limit || '0'), Number(window_))
+      : await hooks.wiring.setRateLimit(home.contractAddr, remote.chain.eid, BigInt(limit || '0'), Number(window_));
     setTx(result);
     if (result.status === 'success') onTxSuccess();
   }
+
+  const currentRl = isStark ? starkRl : evmRl;
 
   return (
     <div>
       <p className="step-hint">
         Rate limits cap how much can be bridged per time window. Set limit to 0 to disable.
-        Applies to the adapter on the source chain only.
+        Applies to the adapter on the source chain only ({isStark ? 'Starknet outbound' : 'EVM adapter'}).
       </p>
 
-      {rl && (
+      {currentRl && (
         <div className="text-xs text-[var(--text-muted)] mb-3">
-          Current: {formatTokenAmount(rl.limit)}{tokenSymbol ? ` ${tokenSymbol}` : ''} per {rl.window}s
-          {tokenDecimals != null && <span className="opacity-60"> (raw: {rl.limit.toString()})</span>}
+          Current: {formatTokenAmount(currentRl.limit)}{tokenSymbol ? ` ${tokenSymbol}` : ''} per {currentRl.window}s
+          {tokenDecimals != null && <span className="opacity-60"> (raw: {currentRl.limit.toString()})</span>}
         </div>
       )}
 
@@ -75,7 +110,9 @@ export function StepRateLimit({ home, remote, hooks, verifyResult, onTxSuccess }
             </div>
           )}
           {tokenDecimals == null && (
-            <div className="text-[11px] text-[var(--text-muted)] mt-1">Depends on token supply & decimals</div>
+            <div className="text-[11px] text-[var(--text-muted)] mt-1">
+              {isStark ? 'Enter raw token units (u128).' : 'Depends on token supply & decimals'}
+            </div>
           )}
         </div>
         <div>

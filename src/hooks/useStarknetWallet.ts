@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { connect, disconnect } from 'starknetkit';
 import { WalletAccount, RpcProvider } from 'starknet';
 import { STARKNET_MAINNET, STARKNET_TESTNET } from '@/config/chains';
+import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
 
 export interface StarknetWallet {
   account: WalletAccount | null;
@@ -15,8 +16,11 @@ export interface StarknetWallet {
 const SN_SEPOLIA_CHAIN_ID = BigInt('0x534e5f5345504f4c4941');
 
 function resolveRpc(chainId: bigint | undefined, rpc?: string): string {
+  if (rpc) return rpc;
   const isSepolia = chainId !== undefined && chainId === SN_SEPOLIA_CHAIN_ID;
-  return rpc ?? (isSepolia ? STARKNET_TESTNET.rpc : STARKNET_MAINNET.rpc);
+  return isSepolia
+    ? getStarknetSepoliaRpc(STARKNET_TESTNET.rpc)
+    : getStarknetMainnetRpc(STARKNET_MAINNET.rpc);
 }
 
 export function useStarknetWallet(): StarknetWallet {
