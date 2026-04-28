@@ -76,6 +76,7 @@ interface TestResult {
 
 async function probeJsonRpc(url: string, method: string): Promise<TestResult> {
   const start = performance.now();
+  const elapsed = (): number => Math.round(performance.now() - start);
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -86,11 +87,39 @@ async function probeJsonRpc(url: string, method: string): Promise<TestResult> {
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-    const json = await res.json() as { result?: string; error?: { message?: string } };
-    if (json.error) return { state: 'fail', latencyMs: Math.round(performance.now() - start), error: json.error.message ?? 'RPC error' };
-    return { state: 'ok', latencyMs: Math.round(performance.now() - start), chainIdHex: json.result };
+
+    if (res.status === 429) {
+      return { state: 'fail', latencyMs: elapsed(), error: 'Rate-limited (HTTP 429). Use a private RPC.' };
+    }
+
+    // Some public RPCs return plain-text errors (e.g. "Too many calls") with
+    // a 200 status. Inspect the response as text first, then parse JSON.
+    const text = await res.text();
+    type JsonRpcReply = { result?: string; error?: { message?: string } };
+    let json: JsonRpcReply | null = null;
+    try {
+      json = JSON.parse(text) as JsonRpcReply;
+    } catch {
+      const snippet = text.trim().slice(0, 80);
+      return {
+        state: 'fail',
+        latencyMs: elapsed(),
+        error: res.ok ? `Non-JSON response: ${snippet}` : `HTTP ${res.status}: ${snippet || res.statusText}`,
+      };
+    }
+    if (!res.ok) {
+      return { state: 'fail', latencyMs: elapsed(), error: `HTTP ${res.status}: ${json?.error?.message ?? res.statusText}` };
+    }
+    if (json?.error) {
+      return { state: 'fail', latencyMs: elapsed(), error: json.error.message ?? 'RPC error' };
+    }
+    return { state: 'ok', latencyMs: elapsed(), chainIdHex: json?.result };
   } catch (e) {
-    return { state: 'fail', latencyMs: Math.round(performance.now() - start), error: e instanceof Error ? e.message : String(e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return { state: 'fail', latencyMs: elapsed(), error: 'Timed out after 8s' };
+    }
+    return { state: 'fail', latencyMs: elapsed(), error: msg };
   }
 }
 

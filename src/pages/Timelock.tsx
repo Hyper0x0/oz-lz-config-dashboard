@@ -30,6 +30,8 @@ import {
   decodeStarknetCall,
   toFeltHex,
 } from '@/utils/starknetTimelock';
+import { getAllStarknetEvents, eventKey } from '@/utils/starknetEvents';
+import { RpcProvider as StarkRpcProvider } from 'starknet';
 import type { TxState, OperationState } from '@/types';
 import { VaultState } from '@/types';
 
@@ -109,12 +111,18 @@ function decodeCalldata(data: string): DecodedCall | null {
 interface ScannedOp {
   id: string;
   target: string;
+  /** EVM hex calldata. Empty for Starknet ops; use cairoSelector / cairoCalldata instead. */
   data: string;
   predecessor: string;
   salt: string;
   state: OperationState;
   eta: string | null;
   txHash: string;
+  kind: 'evm' | 'starknet';
+  /** Starknet only: selector of the inner call. */
+  cairoSelector?: string;
+  /** Starknet only: felt252 calldata for the inner call. */
+  cairoCalldata?: string[];
 }
 
 function StateBadge({ state }: { state: OperationState }): JSX.Element {
@@ -502,7 +510,7 @@ export function Timelock(): JSX.Element {
         else if (tsNum === 1) state = 'Done';
         else if (tsNum <= now) state = 'Ready';
         else state = 'Waiting';
-        return { ...op, state, eta: state === 'Waiting' ? formatCountdown(tsNum) : null };
+        return { ...op, kind: 'evm' as const, state, eta: state === 'Waiting' ? formatCountdown(tsNum) : null };
       }));
       setScannedOps(results);
     } catch (e) {
@@ -512,7 +520,130 @@ export function Timelock(): JSX.Element {
     }
   }
 
-  const explorerTx = (hash: string) => `https://${selectedChain.explorer}/tx/${hash}`;
+  async function handleStarknetScan(): Promise<void> {
+    if (!timelockAddr) return;
+    setScanning(true); setScanError(null); setScannedOps([]);
+    try {
+      // Resolve from-block: user input first, otherwise (latest - 100k blocks).
+      let fromBlock: number | undefined;
+      const trimmed = scanFromBlock.trim();
+      if (trimmed) {
+        const n = Number(trimmed);
+        if (!Number.isInteger(n) || n < 0) throw new Error('From block must be a non-negative integer');
+        fromBlock = n;
+      } else {
+        try {
+          const provider = new StarkRpcProvider({ nodeUrl: starkChain.rpc });
+          const latest = await provider.getBlockLatestAccepted();
+          fromBlock = Math.max(0, latest.block_number - 100000);
+        } catch { /* leave undefined → node default */ }
+      }
+
+      // Fetch events in one paginated pass (4 names OR-matched on key[0]).
+      const events = await getAllStarknetEvents(
+        starkChain.rpc,
+        timelockAddr,
+        ['CallScheduled', 'CallExecuted', 'CallSalt', 'Cancelled'],
+        fromBlock,
+      );
+
+      // Bucket by event type using the selector at keys[0].
+      const SCHEDULED = eventKey('CallScheduled');
+      const EXECUTED  = eventKey('CallExecuted');
+      const SALT      = eventKey('CallSalt');
+      const CANCELLED = eventKey('Cancelled');
+
+      const norm = (h: string): string => '0x' + BigInt(h).toString(16);
+
+      const scheduled: typeof events = [];
+      const executed:  typeof events = [];
+      const saltLogs:  typeof events = [];
+      const cancelled: typeof events = [];
+      for (const ev of events) {
+        const k0 = norm(ev.keys[0]);
+        if (k0 === norm(SCHEDULED)) scheduled.push(ev);
+        else if (k0 === norm(EXECUTED))  executed.push(ev);
+        else if (k0 === norm(SALT))      saltLogs.push(ev);
+        else if (k0 === norm(CANCELLED)) cancelled.push(ev);
+      }
+
+      const doneIds = new Set<string>();
+      for (const ev of executed)  doneIds.add(norm(ev.keys[1]));
+      for (const ev of cancelled) doneIds.add(norm(ev.keys[1]));
+
+      const saltMap = new Map<string, string>();
+      for (const ev of saltLogs) {
+        // CallSalt: keys = [selector, id], data = [salt]
+        const id = norm(ev.keys[1]);
+        if (ev.data[0]) saltMap.set(id, norm(ev.data[0]));
+      }
+
+      // CallScheduled layout (OZ Cairo Timelock):
+      //   keys = [selector, id, index]
+      //   data = [call.to, call.selector, calldata.len, ...calldata, predecessor, delay]
+      const seen = new Set<string>();
+      const active: { id: string; target: string; predecessor: string; salt: string; txHash: string;
+                      cairoSelector: string; cairoCalldata: string[] }[] = [];
+      for (const ev of scheduled) {
+        const id = norm(ev.keys[1]);
+        const index = Number(BigInt(ev.keys[2] ?? '0x0'));
+        if (index !== 0 || seen.has(id) || doneIds.has(id)) continue;
+        seen.add(id);
+        try {
+          const d = ev.data;
+          const target = norm(d[0]);
+          const innerSelector = norm(d[1]);
+          const calldataLen = Number(BigInt(d[2]));
+          const calldata = d.slice(3, 3 + calldataLen).map(norm);
+          const predecessor = norm(d[3 + calldataLen] ?? '0x0');
+          // delay (one felt for u64) is at d[3+calldataLen+1]; not stored.
+          active.push({
+            id, target, predecessor,
+            salt: saltMap.get(id) ?? '0x0',
+            txHash: ev.transaction_hash,
+            cairoSelector: innerSelector,
+            cairoCalldata: calldata,
+          });
+        } catch { /* skip malformed event */ }
+      }
+
+      // Resolve state via on-chain getTimestamp, mirroring the EVM path.
+      const now = Math.floor(Date.now() / 1000);
+      const results: ScannedOp[] = await Promise.all(active.map(async (op) => {
+        let state: OperationState = 'Unset';
+        let eta: string | null = null;
+        try {
+          const ts = await cairoOps.getTimestamp(timelockAddr, op.id, starkChain.rpc);
+          const tsNum = Number(ts);
+          if (tsNum === 0) state = 'Unset';
+          else if (tsNum === 1) state = 'Done';
+          else if (tsNum <= now) state = 'Ready';
+          else { state = 'Waiting'; eta = formatCountdown(tsNum); }
+        } catch { /* leave Unset */ }
+        return {
+          id: op.id, target: op.target, data: '', predecessor: op.predecessor, salt: op.salt,
+          txHash: op.txHash, kind: 'starknet' as const,
+          cairoSelector: op.cairoSelector, cairoCalldata: op.cairoCalldata,
+          state, eta,
+        };
+      }));
+      setScannedOps(results);
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  function handleScanClick(): void {
+    if (chainType === 'starknet') void handleStarknetScan();
+    else void handleScan();
+  }
+
+  const explorerTx = (hash: string) =>
+    chainType === 'starknet'
+      ? `https://${starkChain.explorer}/tx/${hash}`
+      : `https://${selectedChain.explorer}/tx/${hash}`;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -840,24 +971,17 @@ export function Timelock(): JSX.Element {
 
       {/* ── Right: active operations sidebar ── */}
       <div className="col-span-12 lg:col-span-4">
-        <Section icon="list_alt" title="Operations" subtitle={chainType === 'starknet' ? 'Event scan not available on Starknet' : scannedOps.length > 0 ? `${scannedOps.length} found` : 'Scan to discover'}
-          actions={chainType === 'evm' ? (
-            <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !timelockAddr}>
+        <Section icon="list_alt" title="Operations" subtitle={scannedOps.length > 0 ? `${scannedOps.length} found` : 'Scan to discover'}
+          actions={
+            <button className="btn btn-sm" onClick={handleScanClick} disabled={scanning || !timelockAddr}>
               {scanning ? '…' : 'Scan'}
             </button>
-          ) : null}>
-          {chainType === 'starknet' && (
-            <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">
-              Event scanning is not available for Starknet — use the Lookup section to check operation state by hash.
-            </div>
-          )}
-          {chainType === 'evm' && (
+          }>
           <div className="mb-4">
             <div className="label">From block</div>
             <input className="input" placeholder="Auto (~100k blocks back)"
               value={scanFromBlock} onChange={(e) => setScanFromBlock(e.target.value)} />
           </div>
-          )}
 
           {scanError && <div className="text-[11px] text-error mb-3">{scanError}</div>}
           {!scanning && scannedOps.length === 0 && !scanError && (
@@ -892,7 +1016,12 @@ export function Timelock(): JSX.Element {
                 return 0;
               })
               .map((op) => {
-              const decoded = decodeCalldata(op.data);
+              const decoded = op.kind === 'starknet' && op.cairoSelector && op.cairoCalldata
+                ? decodeStarknetCall(op.cairoSelector, op.cairoCalldata, STARK_DECODE_ABIS)
+                : decodeCalldata(op.data);
+              const headerFallback = op.kind === 'starknet'
+                ? (op.cairoSelector ? `${op.cairoSelector.slice(0, 10)}…` : 'unknown')
+                : op.data.slice(0, 10);
               return (
                 <div key={op.id} className="bg-surface-container rounded-lg border border-outline-variant/10 overflow-hidden">
                   {/* Header: decoded function name or raw hash */}
@@ -903,7 +1032,7 @@ export function Timelock(): JSX.Element {
                         <span className="text-[9px] text-on-surface-variant bg-surface-container-high px-1.5 py-0.5 rounded">{decoded.contract}</span>
                       </div>
                     ) : (
-                      <div className="font-mono text-[11px] text-on-surface mb-1">{op.data.slice(0, 10)}</div>
+                      <div className="font-mono text-[11px] text-on-surface mb-1">{headerFallback}</div>
                     )}
                     <div className="font-mono text-[10px] text-on-surface-variant opacity-60">
                       {op.id.slice(0, 14)}…{op.id.slice(-6)}

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Contract, JsonRpcProvider, Interface, keccak256, toUtf8Bytes } from 'ethers';
 import { RpcProvider, Contract as StarkContract } from 'starknet';
+import { getAllStarknetEvents, eventKey } from '@/utils/starknetEvents';
 import { useWallet } from '@/context/WalletContext';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
@@ -295,6 +296,77 @@ export function Roles(): JSX.Element {
     else void handleEvmCheck();
   }
 
+  // ── Starknet Scan events ──────────────────────────────────────────────
+  async function handleStarkScan(): Promise<void> {
+    if (!contractAddr) return;
+    setScanning(true);
+    setScanError(null);
+    try {
+      // Default from-block: latest - 100k blocks (~35 days on Starknet).
+      let fromBlock: number | undefined;
+      try {
+        const provider = new RpcProvider({ nodeUrl: starkChain.rpc });
+        const latest = await provider.getBlockLatestAccepted();
+        fromBlock = Math.max(0, latest.block_number - 100000);
+      } catch { /* leave undefined */ }
+
+      const events = await getAllStarknetEvents(
+        starkChain.rpc,
+        contractAddr,
+        ['RoleGranted', 'RoleRevoked'],
+        fromBlock,
+      );
+
+      const GRANTED = eventKey('RoleGranted');
+      const REVOKED = eventKey('RoleRevoked');
+      const norm = (h: string): string => '0x' + BigInt(h).toString(16);
+      // OZ Cairo AccessControl emits all event fields as data:
+      //   keys = [event_selector], data = [role, account, sender]
+      // Some forks promote `role` and `account` to keys; handle both layouts.
+      const readRoleAndAccount = (ev: { keys: string[]; data: string[] }): { role: string; account: string } | null => {
+        if (ev.keys.length >= 3) return { role: norm(ev.keys[1]), account: norm(ev.keys[2]) };
+        if (ev.data.length >= 2) return { role: norm(ev.data[0]), account: norm(ev.data[1]) };
+        return null;
+      };
+
+      const roleAccounts = new Map<string, Set<string>>();
+      for (const ev of events) {
+        const k0 = norm(ev.keys[0]);
+        const parsed = readRoleAndAccount(ev);
+        if (!parsed) continue;
+        if (k0 === norm(GRANTED)) {
+          if (!roleAccounts.has(parsed.role)) roleAccounts.set(parsed.role, new Set());
+          roleAccounts.get(parsed.role)!.add(parsed.account.toLowerCase());
+        } else if (k0 === norm(REVOKED)) {
+          roleAccounts.get(parsed.role)?.delete(parsed.account.toLowerCase());
+        }
+      }
+
+      const result: RoleHolder[] = [];
+      for (const [rh, accounts] of roleAccounts) {
+        const preset = presetRoles.find((p) => {
+          const phash = norm(p.cairoHash ?? snKeccak(p.label));
+          return phash === rh;
+        });
+        const label = preset?.label ?? `0x${rh.slice(2, 10)}…`;
+        for (const account of accounts) {
+          result.push({ role: rh, roleLabel: label, account });
+        }
+      }
+      result.sort((a, b) => a.roleLabel.localeCompare(b.roleLabel) || a.account.localeCompare(b.account));
+      setHolders(result);
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  function handleScanClick(): void {
+    if (chainType === 'starknet') void handleStarkScan();
+    else void handleScan();
+  }
+
   // ── EVM Scan events ───────────────────────────────────────────────────
   async function handleScan(): Promise<void> {
     if (!contractAddr || chainType === 'starknet') return;
@@ -452,22 +524,15 @@ export function Roles(): JSX.Element {
       {/* Role Holders — sidebar */}
       <Section icon="group" title="Role Holders" subtitle="On-chain role assignments"
         actions={
-          chainType === 'evm' ? (
-            <button className="btn btn-sm" onClick={handleScan} disabled={scanning || !contractAddr || !checked}>
-              {scanning ? 'Scanning…' : 'Scan'}
-            </button>
-          ) : null
+          <button className="btn btn-sm" onClick={handleScanClick} disabled={scanning || !contractAddr || !checked}>
+            {scanning ? 'Scanning…' : 'Scan'}
+          </button>
         }>
         {scanError && <div className="text-xs text-error mb-3">{scanError}</div>}
-        {chainType === 'starknet' && (
-          <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">
-            Event scanning not available for Starknet — use "Check" to verify specific roles
-          </div>
-        )}
-        {chainType === 'evm' && !checked && (
+        {!checked && (
           <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Check a contract first</div>
         )}
-        {chainType === 'evm' && checked && holders.length === 0 && !scanning && (
+        {checked && holders.length === 0 && !scanning && (
           <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Press Scan to find holders</div>
         )}
         {holdersByRole.size > 0 && (
