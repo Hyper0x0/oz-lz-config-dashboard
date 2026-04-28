@@ -35,6 +35,12 @@ type RawMetadata = Record<string, RawChain | undefined>;
 let _cache: LZChain[] | null = null;
 let _pending: Promise<LZChain[]> | null = null;
 
+/** Drops the in-memory chain cache. Used by Settings after persisting RPC overrides. */
+export function clearLZChainsCache(): void {
+  _cache = null;
+  _pending = null;
+}
+
 async function fetchChains(): Promise<LZChain[]> {
   if (_cache) return _cache;
   if (_pending) return _pending;
@@ -139,11 +145,25 @@ export function useLZChains(defaultTestnet = true): LZChainsState {
   const [isTestnet, setIsTestnet] = useState(defaultTestnet);
 
   useEffect(() => {
-    setLoading(true);
-    fetchChains().then((c) => {
-      setAllChains(c);
-      setLoading(false);
-    });
+    let cancelled = false;
+    function load(): void {
+      setLoading(true);
+      fetchChains().then((c) => {
+        if (cancelled) return;
+        setAllChains(c);
+        setLoading(false);
+      });
+    }
+    load();
+    function onRpcChanged(): void {
+      clearLZChainsCache();
+      load();
+    }
+    window.addEventListener('ozlz:rpc-changed', onRpcChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('ozlz:rpc-changed', onRpcChanged);
+    };
   }, []);
 
   // While API is loading, use static catalog as placeholder
