@@ -311,7 +311,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_send_library',
         calldata: CallData.compile([oappAddr, eid]),
-      });
+      }, 'latest');
       const addr = result[0];
       return BigInt(addr) === 0n ? null : addr;
     } catch {
@@ -330,7 +330,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_receive_library',
         calldata: CallData.compile([oappAddr, eid]),
-      });
+      }, 'latest');
       const addr = result[0];
       const isDefault = BigInt(result[1]) !== 0n;
       return { lib: BigInt(addr) === 0n ? null : addr, isDefault };
@@ -349,7 +349,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_delegate',
         calldata: CallData.compile([oappAddr]),
-      });
+      }, 'latest');
       const addr = result[0];
       return BigInt(addr) === 0n ? null : addr;
     } catch {
@@ -366,7 +366,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_send_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
-      }));
+      }, 'latest'));
       return decodeStarknetUln(result);
     } catch (e) {
       console.warn('[cairoEndpoint] readSendUlnConfig failed:', (e as Error)?.message ?? e);
@@ -383,7 +383,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_send_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_EXECUTOR]),
-      }));
+      }, 'latest'));
       return decodeStarknetExecutor(result);
     } catch (e) {
       console.warn('[cairoEndpoint] readSendExecutorConfig failed:', (e as Error)?.message ?? e);
@@ -400,7 +400,7 @@ export function useCairoEndpoint(account: WalletAccount | null): CairoEndpointOp
         contractAddress: endpointAddr,
         entrypoint: 'get_receive_config',
         calldata: CallData.compile([oappAddr, libAddr, eid, CONFIG_TYPE_ULN]),
-      }));
+      }, 'latest'));
       return decodeStarknetUln(result);
     } catch (e) {
       console.warn('[cairoEndpoint] readReceiveUlnConfig failed:', (e as Error)?.message ?? e);

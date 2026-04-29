@@ -59,7 +59,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       contractAddress: addr,
       entrypoint: 'get_min_delay',
       calldata: [],
-    });
+    }, 'latest');
     return BigInt(result[0]);
   }, []);
 
@@ -69,7 +69,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       contractAddress: addr,
       entrypoint: 'get_operation_state',
       calldata: CallData.compile([id]),
-    });
+    }, 'latest');
     return stateFromNum(Number(result[0]));
   }, []);
 
@@ -79,7 +79,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       contractAddress: addr,
       entrypoint: 'get_timestamp',
       calldata: CallData.compile([id]),
-    });
+    }, 'latest');
     return BigInt(result[0]);
   }, []);
 
@@ -97,7 +97,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
       contractAddress: addr,
       entrypoint: 'hash_operation',
       calldata: args,
-    });
+    }, 'latest');
     return result[0];
   }, []);
 
@@ -109,7 +109,7 @@ export function useCairoTimelock(account: WalletAccount | null): CairoTimelockOp
           contractAddress: addr,
           entrypoint: 'has_role',
           calldata: CallData.compile([role, walletAddr]),
-        });
+        }, 'latest');
         return BigInt(r[0]) !== 0n;
       } catch {
         return false;

@@ -88,7 +88,7 @@ async function readCairoPeer(cairoOftAddr: string, eid: number, rpc: string): Pr
     contractAddress: normalizeStarkAddr(cairoOftAddr),
     entrypoint: 'get_peer',
     calldata: CallData.compile([eid]),
-  });
+  }, 'latest');
   const low  = BigInt(result[0]);
   const high = BigInt(result[1]);
   const value = (high << BigInt(128)) | low;
@@ -158,7 +158,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
         contractAddress: normalizeStarkAddr(cairoOftAddr),
         entrypoint: 'get_enforced_options',
         calldata: CallData.compile([evmEid, 1 /* MSG_TYPE_SEND */]),
-      });
+      }, 'latest');
       // Raw result for ByteArray: [data_len, ...data_felts, pending_word, pending_word_len]
       if (!result || result.length === 0) return null;
       const dataLen = Number(result[0]);
@@ -233,7 +233,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
           contractAddress: normalizeStarkAddr(cairoOftAddr),
           entrypoint: 'quote_send',
           calldata,
-        });
+        }, 'latest');
         // MessagingFee = { native_fee: u256, lz_token_fee: u256 }
         const nativeFee = (BigInt(result[1]) << 128n) | BigInt(result[0]);
         const lzTokenFee = (BigInt(result[3]) << 128n) | BigInt(result[2]);
@@ -320,7 +320,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
       contractAddress: normalizeStarkAddr(cairoOftAddr),
       entrypoint: 'balance_of',
       calldata: CallData.compile([normalizeStarkAddr(owner)]),
-    });
+    }, 'latest');
     const low  = BigInt(result[0] ?? '0');
     const high = BigInt(result[1] ?? '0');
     return low + (high << 128n);
@@ -333,8 +333,8 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     const norm = normalizeStarkAddr(addr);
     try {
       const [nameResult, symbolResult] = await Promise.allSettled([
-        provider.callContract({ contractAddress: norm, entrypoint: 'name', calldata: [] }),
-        provider.callContract({ contractAddress: norm, entrypoint: 'symbol', calldata: [] }),
+        provider.callContract({ contractAddress: norm, entrypoint: 'name', calldata: [] }, 'latest'),
+        provider.callContract({ contractAddress: norm, entrypoint: 'symbol', calldata: [] }, 'latest'),
       ]);
 
       /**
@@ -396,7 +396,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
           contractAddress: normalizeStarkAddr(addr),
           entrypoint: 'decimals',
           calldata: [],
-        }),
+        }, 'latest'),
       );
       const raw = BigInt(result[0] ?? '0');
       const n = Number(raw);
@@ -424,7 +424,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     let tokenErr: 'entrypoint_missing' | 'contract_missing' | 'rpc_error' | null = null;
     try {
       const result = await retryOnRpcFlake(() =>
-        provider.callContract({ contractAddress: normalized, entrypoint: 'token', calldata: [] }),
+        provider.callContract({ contractAddress: normalized, entrypoint: 'token', calldata: [] }, 'latest'),
       );
       const tokenAddr = result[0];
       if (!tokenAddr || tokenAddr === '0x0') return { type: 'oft', tokenAddr: null, error: null };
@@ -440,7 +440,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     // 2. token() didn't resolve — probe oft_version() as a liveness + OFT-ness check.
     try {
       await retryOnRpcFlake(() =>
-        provider.callContract({ contractAddress: normalized, entrypoint: 'oft_version', calldata: [] }),
+        provider.callContract({ contractAddress: normalized, entrypoint: 'oft_version', calldata: [] }, 'latest'),
       );
       // It is an OFT; the earlier token() failure was either entrypoint-missing (plain OFT) or a persistent RPC flake.
       const softError = tokenErr === 'rpc_error' ? 'token() RPC still flaky after retries — treated as plain OFT' : null;
@@ -470,7 +470,7 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
           contractAddress: normalizeStarkAddr(cairoOftAddr),
           entrypoint,
           calldata: CallData.compile([eid]),
-        }),
+        }, 'latest'),
       );
       const limit = BigInt(result[2] ?? '0');
       const window = Number(BigInt(result[3] ?? '0'));

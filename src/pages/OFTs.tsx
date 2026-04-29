@@ -140,7 +140,7 @@ export function OFTs(): JSX.Element {
           try {
             const { RpcProvider: RP } = await import('starknet');
             const p = new RP({ nodeUrl: starkHome.rpc });
-            const result = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] });
+            const result = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] }, 'latest');
             if (result[0]) dec = Number(BigInt(result[0]));
           } catch { /* default 18 */ }
           setDecimals(dec);
@@ -605,7 +605,7 @@ function SideBalance({ label, chain, oftAddr, detectedType, evm, stark, cairo, s
           } catch { /* */ }
           const { RpcProvider: RP } = await import('starknet');
           const p = new RP({ nodeUrl: starkC.rpc });
-          const decResult = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] }).catch(() => null);
+          const decResult = await p.callContract({ contractAddress: tokenAddr, entrypoint: 'decimals', calldata: [] }, 'latest').catch(() => null);
           const dec = decResult && decResult[0] ? Number(BigInt(decResult[0])) : 18;
           const [tokenBalRaw, symInfo, nativeBalRaw] = await Promise.all([
             cairo.cairoBalance(tokenAddr, stark.address, starkC.rpc),
