@@ -11,6 +11,7 @@ import { Section } from '@/components/Section';
 import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CopyButton } from '@/components/CopyButton';
 import { AddressPill } from '@/components/AddressPill';
+import { StickyAction } from '@/components/StickyAction';
 import { useToast } from '@/context/ToastContext';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
@@ -876,12 +877,14 @@ export function Timelock(): JSX.Element {
             {chainType === 'evm' && wrongChain ? (
               <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
             ) : (
-              <button className="btn btn-primary" onClick={handleSchedule}
-                disabled={chainType === 'starknet'
-                  ? !stark.isConnected || !starkSelector || !starkCalldata || saltInvalidForStarknet || predecessorInvalidForStarknet
-                  : !evm.isConnected || !calldata}>
-                Schedule{chainType === 'starknet' ? ' (Starknet)' : ''}
-              </button>
+              <StickyAction caption="Schedule operation" enabled={!opState}>
+                <button className="btn btn-primary" onClick={handleSchedule}
+                  disabled={chainType === 'starknet'
+                    ? !stark.isConnected || !starkSelector || !starkCalldata || saltInvalidForStarknet || predecessorInvalidForStarknet
+                    : !evm.isConnected || !calldata}>
+                  Schedule{chainType === 'starknet' ? ' (Starknet)' : ''}
+                </button>
+              </StickyAction>
             )}
           </div>
           <div className="mt-3"><TxStatus state={scheduleTx} /></div>
@@ -933,17 +936,21 @@ export function Timelock(): JSX.Element {
                 </div>
                 {opState === 'Ready' && !wrongChain && (
                   <div className="flex flex-col gap-1">
-                    <button className="btn btn-primary" onClick={handleExecute}
-                      disabled={chainType === 'starknet'
-                        ? !stark.isConnected || (!execStarkSelector || !execStarkCalldata)
-                        : !evm.isConnected || !derivedCalldata}>Execute</button>
+                    <StickyAction caption="Execute operation" enabled={opState === 'Ready'}>
+                      <button className="btn btn-primary" onClick={handleExecute}
+                        disabled={chainType === 'starknet'
+                          ? !stark.isConnected || (!execStarkSelector || !execStarkCalldata)
+                          : !evm.isConnected || !derivedCalldata}>Execute</button>
+                    </StickyAction>
                     {chainType === 'evm' && evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
                     {chainType === 'starknet' && stark.isConnected && (!execStarkSelector || !execStarkCalldata) && <span className="text-[11px] text-on-surface-variant">Re-enter the scheduled function + args to execute</span>}
                   </div>
                 )}
                 {(opState === 'Waiting' || opState === 'Ready') && !wrongChain && (
-                  <button className="btn btn-danger"
-                    onClick={handleCancel} disabled={chainType === 'starknet' ? !stark.isConnected : !evm.isConnected}>Cancel</button>
+                  <StickyAction caption="Cancel operation" enabled={opState === 'Waiting'}>
+                    <button className="btn btn-danger"
+                      onClick={handleCancel} disabled={chainType === 'starknet' ? !stark.isConnected : !evm.isConnected}>Cancel</button>
+                  </StickyAction>
                 )}
                 {(opState === 'Ready' || opState === 'Waiting') && wrongChain && chainType === 'evm' && (
                   <SwitchChainButton chainName={selectedChain.name} onSwitch={() => evm.switchNetwork(selectedChain.id)} />
