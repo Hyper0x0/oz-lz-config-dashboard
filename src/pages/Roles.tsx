@@ -7,6 +7,7 @@ import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
 import { SwitchChainButton } from '@/components/ChainSwitch';
+import { AddressPill } from '@/components/AddressPill';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
@@ -544,9 +545,15 @@ export function Roles(): JSX.Element {
                   {rh.map((h) => (
                     <div key={h.account} className="flex items-center gap-2 bg-surface-container rounded px-3 py-2 border border-outline-variant/10">
                       <span className="text-xs text-secondary font-bold">✓</span>
-                      <span className="font-mono text-[10px] text-on-surface break-all flex-1">{h.account}</span>
-                      <a href={`https://${explorer}/address/${h.account}`} target="_blank" rel="noreferrer"
-                        className="text-[10px] text-primary hover:underline flex-shrink-0">↗</a>
+                      <div className="flex-1 min-w-0">
+                        <AddressPill
+                          address={h.account}
+                          chain={chainType === 'starknet' ? 'starknet' : 'evm'}
+                          chainId={chainType === 'evm' ? evmChain.id : undefined}
+                          explorerUrl={`https://${explorer}/address/`}
+                          size="sm"
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>

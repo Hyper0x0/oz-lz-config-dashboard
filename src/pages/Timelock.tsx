@@ -10,6 +10,7 @@ import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CopyButton } from '@/components/CopyButton';
+import { AddressPill } from '@/components/AddressPill';
 import { useToast } from '@/context/ToastContext';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
@@ -1078,9 +1079,12 @@ export function Timelock(): JSX.Element {
                     ) : (
                       <div className="font-mono text-[11px] text-on-surface mb-1">{headerFallback}</div>
                     )}
-                    <div className="font-mono text-[10px] text-on-surface-variant opacity-60">
-                      {op.id.slice(0, 14)}…{op.id.slice(-6)}
-                    </div>
+                    <AddressPill
+                      address={op.id}
+                      chain={op.kind === 'starknet' ? 'starknet' : null}
+                      size="sm"
+                      truncate={{ start: 12, end: 6 }}
+                    />
                     {op.eta && <div className="text-[10px] text-tertiary mt-1">{op.eta}</div>}
                   </div>
 
