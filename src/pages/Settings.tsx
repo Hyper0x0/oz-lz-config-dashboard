@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import packageJson from '../../package.json';
 import { Section } from '@/components/Section';
 import { useLZChains } from '@/hooks/useLZChains';
+import { useToast } from '@/context/ToastContext';
 
 const STORAGE_KEY = 'ozlz_rpc_overrides';
 const API_KEY_STORAGE = 'ozlz_explorer_api_key';
@@ -278,20 +279,14 @@ export function Settings(): JSX.Element {
   const [apiKey, setApiKey] = useState(loadApiKey);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState(apiKey);
-  const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [tests, setTests] = useState<Record<string, TestResult>>({});
+  const toast = useToast();
 
   // Load all chains (mainnet + testnet) for the EVM RPC chain dropdown.
   const { allChains, loading: chainsLoading } = useLZChains(false);
 
-  useEffect(() => {
-    if (!savedFlash) return;
-    const t = setTimeout(() => setSavedFlash(null), 1800);
-    return () => clearTimeout(t);
-  }, [savedFlash]);
-
   function flash(msg: string): void {
-    setSavedFlash(msg);
+    toast.success(msg);
   }
 
   function persistOverrides(next: RpcOverrides): void {
@@ -355,6 +350,11 @@ export function Settings(): JSX.Element {
     setTests((t) => ({ ...t, [key]: { state: 'testing' } }));
     const result = await probeJsonRpc(url, kind === 'evm' ? 'eth_chainId' : 'starknet_chainId');
     setTests((t) => ({ ...t, [key]: result }));
+    if (result.state === 'fail') {
+      toast.error('RPC test failed', result.error ?? 'unknown error');
+    } else if (result.specWarning) {
+      toast.warn('RPC spec mismatch', result.specWarning);
+    }
   }
 
   function handleResetAll(): void {
@@ -390,17 +390,9 @@ export function Settings(): JSX.Element {
 
       <div className="flex items-center justify-between">
         <h2 className="font-headline text-lg font-semibold text-on-surface m-0">Settings</h2>
-        <div className="flex items-center gap-3">
-          {savedFlash && (
-            <span className="text-xs text-secondary flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">check_circle</span>
-              {savedFlash}
-            </span>
-          )}
-          <button className="btn btn-sm btn-danger" onClick={handleResetAll} title="Reset all overrides">
-            <span className="material-symbols-outlined text-sm">restart_alt</span> Reset all
-          </button>
-        </div>
+        <button className="btn btn-sm btn-danger" onClick={handleResetAll} title="Reset all overrides">
+          <span className="material-symbols-outlined text-sm">restart_alt</span> Reset all
+        </button>
       </div>
 
       <Section icon="key" title="Explorer API Key" subtitle="Used by Timelock scan to fetch on-chain events. Works across all supported EVM chains (Etherscan V2 API).">

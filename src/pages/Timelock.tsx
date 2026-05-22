@@ -10,6 +10,7 @@ import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CopyButton } from '@/components/CopyButton';
+import { useToast } from '@/context/ToastContext';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
 import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown, isFelt252 } from '@/utils/timelock';
@@ -155,6 +156,21 @@ function resolveStarkChain(isTestnet: boolean): { id: string; name: string; rpc:
     return { id: 'SN_SEPOLIA', name: 'Starknet Sepolia', rpc: getStarknetSepoliaRpc(STARKNET_TESTNET.rpc), explorer: 'sepolia.voyager.online' };
   }
   return { id: 'SN_MAIN', name: 'Starknet Mainnet', rpc: getStarknetMainnetRpc(STARKNET_MAINNET.rpc), explorer: 'voyager.online' };
+}
+
+/** Fire a toast each time `tx` transitions from pending → success/error. */
+function useTxToast(label: string, tx: TxState, toast: ReturnType<typeof useToast>): void {
+  const last = useMemo(() => ({ status: tx.status }), [tx.status]);
+  useEffect(() => {
+    if (last.status === 'success') {
+      const h = (tx as { hash?: string }).hash;
+      toast.success(`${label} confirmed`, h ? `${h.slice(0, 10)}…${h.slice(-8)}` : undefined);
+    } else if (last.status === 'error') {
+      const m = (tx as { message?: string }).message ?? 'unknown error';
+      toast.error(`${label} failed`, m.length > 240 ? m.slice(0, 240) + '…' : m);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tx.status]);
 }
 
 export function Timelock(): JSX.Element {
@@ -319,6 +335,11 @@ export function Timelock(): JSX.Element {
   const [scheduleTx, setScheduleTx] = useState<TxState>({ status: 'idle' });
   const [executeTx,  setExecuteTx]  = useState<TxState>({ status: 'idle' });
   const [cancelTx,   setCancelTx]   = useState<TxState>({ status: 'idle' });
+
+  const toast = useToast();
+  useTxToast('Schedule', scheduleTx, toast);
+  useTxToast('Execute',  executeTx,  toast);
+  useTxToast('Cancel',   cancelTx,   toast);
 
   const [scannedOps,   setScannedOps]   = useState<ScannedOp[]>([]);
   const [scanning,     setScanning]     = useState(false);

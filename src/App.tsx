@@ -6,6 +6,8 @@ import { Timelock } from '@/pages/Timelock';
 import { Roles } from '@/pages/Roles';
 import { Settings } from '@/pages/Settings';
 import { WalletProvider, useWallet } from '@/context/WalletContext';
+import { ToastProvider } from '@/context/ToastContext';
+import { ToastContainer } from '@/components/ToastContainer';
 
 const navClass = ({ isActive }: { isActive: boolean }) => isActive
   ? 'flex items-center gap-3 px-4 py-2.5 rounded-lg bg-primary/8 text-primary font-semibold border-l-2 border-primary transition-all'
@@ -154,9 +156,12 @@ function AppShell(): JSX.Element {
 export function App(): JSX.Element {
   return (
     <BrowserRouter>
-      <WalletProvider>
-        <AppShell />
-      </WalletProvider>
+      <ToastProvider>
+        <WalletProvider>
+          <AppShell />
+          <ToastContainer />
+        </WalletProvider>
+      </ToastProvider>
     </BrowserRouter>
   );
 }
