@@ -8,6 +8,7 @@ import { Settings } from '@/pages/Settings';
 import { WalletProvider, useWallet } from '@/context/WalletContext';
 import { ToastProvider } from '@/context/ToastContext';
 import { ToastContainer } from '@/components/ToastContainer';
+import { CommandPalette } from '@/components/CommandPalette';
 
 const navClass = ({ isActive }: { isActive: boolean }) => isActive
   ? 'flex items-center gap-3 px-4 py-2.5 rounded-lg bg-primary/8 text-primary font-semibold border-l-2 border-primary transition-all'
@@ -122,13 +123,36 @@ function PageTitle(): JSX.Element {
   return <><span className="text-on-surface-variant font-normal">OpenZeppelin</span> <span className="text-on-surface-variant/40 mx-1">/</span> <span className="text-on-surface">TimeLock</span></>;
 }
 
+function PaletteTrigger(): JSX.Element {
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+  return (
+    <button
+      type="button"
+      onClick={() => window.dispatchEvent(new Event('ozlz:open-palette'))}
+      className="flex items-center gap-2 px-3 h-9 rounded-lg bg-surface-container/60 border border-outline-variant/15 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors text-xs"
+      title="Open command palette"
+      aria-label="Open command palette"
+    >
+      <span className="material-symbols-outlined text-sm">search</span>
+      <span>Jump to…</span>
+      <span className="ml-2 flex items-center gap-0.5 font-mono text-[10px] text-on-surface-variant/70">
+        <kbd className="px-1 py-0.5 rounded border border-outline-variant/30 bg-surface-container">{isMac ? '⌘' : 'Ctrl'}</kbd>
+        <kbd className="px-1 py-0.5 rounded border border-outline-variant/30 bg-surface-container">K</kbd>
+      </span>
+    </button>
+  );
+}
+
 function TopBar(): JSX.Element {
   return (
     <header className="fixed top-0 right-0 left-72 h-16 flex items-center justify-between px-8 z-40 bg-surface/70 backdrop-blur-2xl border-b border-outline-variant/10">
       <h1 className="font-headline text-sm font-semibold tracking-tight">
         <PageTitle />
       </h1>
-      <HeaderWallets />
+      <div className="flex items-center gap-3">
+        <PaletteTrigger />
+        <HeaderWallets />
+      </div>
     </header>
   );
 }
@@ -159,6 +183,7 @@ export function App(): JSX.Element {
       <ToastProvider>
         <WalletProvider>
           <AppShell />
+          <CommandPalette />
           <ToastContainer />
         </WalletProvider>
       </ToastProvider>
