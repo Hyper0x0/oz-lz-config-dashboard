@@ -7,7 +7,7 @@ const STORAGE_KEY = 'ozlz_rpc_overrides';
 const API_KEY_STORAGE = 'ozlz_explorer_api_key';
 
 const STARKNET_MAINNET_DEFAULT = 'https://rpc.starknet.lava.build';
-const STARKNET_SEPOLIA_DEFAULT = 'https://starknet-sepolia.drpc.org';
+const STARKNET_SEPOLIA_DEFAULT = 'https://free-rpc.nethermind.io/sepolia-juno/v0_7';
 
 interface RpcOverrides {
   starknetMainnet: string;
@@ -72,53 +72,87 @@ interface TestResult {
   latencyMs?: number;
   error?: string;
   chainIdHex?: string;
+  /** Starknet only — JSON-RPC spec version reported by the node (e.g. "0.7.1"). */
+  specVersion?: string;
+  /** Set when the node speaks a JSON-RPC spec incompatible with starknet.js@6.x (which expects 0.7.x). */
+  specWarning?: string;
+}
+
+/** starknet.js@6.x speaks Starknet JSON-RPC 0.7.x — flag any other major.minor. */
+const STARKNET_EXPECTED_SPEC = '0.7';
+
+async function jsonRpcCall(url: string, method: string, signal: AbortSignal): Promise<{ result?: string; error?: { message?: string }; httpStatus: number; rawText: string }> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method, params: [], id: 1 }),
+    signal,
+  });
+  const rawText = await res.text();
+  try {
+    const json = JSON.parse(rawText) as { result?: string; error?: { message?: string } };
+    return { ...json, httpStatus: res.status, rawText };
+  } catch {
+    return { httpStatus: res.status, rawText };
+  }
 }
 
 async function probeJsonRpc(url: string, method: string): Promise<TestResult> {
   const start = performance.now();
   const elapsed = (): number => Math.round(performance.now() - start);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', method, params: [], id: 1 }),
-      signal: ctrl.signal,
-    });
+    const reply = await jsonRpcCall(url, method, ctrl.signal);
     clearTimeout(timer);
 
-    if (res.status === 429) {
+    if (reply.httpStatus === 429) {
       return { state: 'fail', latencyMs: elapsed(), error: 'Rate-limited (HTTP 429). Use a private RPC.' };
     }
-
-    // Some public RPCs return plain-text errors (e.g. "Too many calls") with
-    // a 200 status. Inspect the response as text first, then parse JSON.
-    const text = await res.text();
-    type JsonRpcReply = { result?: string; error?: { message?: string } };
-    let json: JsonRpcReply | null = null;
-    try {
-      json = JSON.parse(text) as JsonRpcReply;
-    } catch {
-      const snippet = text.trim().slice(0, 80);
+    if (!reply.rawText) {
+      return { state: 'fail', latencyMs: elapsed(), error: `HTTP ${reply.httpStatus}: empty response` };
+    }
+    if (reply.result === undefined && reply.error === undefined) {
+      const snippet = reply.rawText.trim().slice(0, 80);
       return {
         state: 'fail',
         latencyMs: elapsed(),
-        error: res.ok ? `Non-JSON response: ${snippet}` : `HTTP ${res.status}: ${snippet || res.statusText}`,
+        error: reply.httpStatus < 400 ? `Non-JSON response: ${snippet}` : `HTTP ${reply.httpStatus}: ${snippet}`,
       };
     }
-    if (!res.ok) {
-      return { state: 'fail', latencyMs: elapsed(), error: `HTTP ${res.status}: ${json?.error?.message ?? res.statusText}` };
+    if (reply.httpStatus >= 400) {
+      return { state: 'fail', latencyMs: elapsed(), error: `HTTP ${reply.httpStatus}: ${reply.error?.message ?? 'request failed'}` };
     }
-    if (json?.error) {
-      return { state: 'fail', latencyMs: elapsed(), error: json.error.message ?? 'RPC error' };
+    if (reply.error) {
+      return { state: 'fail', latencyMs: elapsed(), error: reply.error.message ?? 'RPC error' };
     }
-    return { state: 'ok', latencyMs: elapsed(), chainIdHex: json?.result };
+
+    const base: TestResult = { state: 'ok', latencyMs: elapsed(), chainIdHex: reply.result };
+
+    // Starknet: also probe spec version so we can warn about v0.5/v0.10 endpoints
+    // that look healthy but will fail mid-call in starknet.js@6.x.
+    if (method === 'starknet_chainId') {
+      try {
+        const specCtrl = new AbortController();
+        const specTimer = setTimeout(() => specCtrl.abort(), 4000);
+        const spec = await jsonRpcCall(url, 'starknet_specVersion', specCtrl.signal);
+        clearTimeout(specTimer);
+        if (typeof spec.result === 'string') {
+          base.specVersion = spec.result;
+          if (!spec.result.startsWith(`${STARKNET_EXPECTED_SPEC}.`)) {
+            base.specWarning = `RPC spec ${spec.result} — starknet.js@6.x expects ${STARKNET_EXPECTED_SPEC}.x. Reads/writes will fail. Use a /rpc/v0_7 endpoint.`;
+          }
+        }
+      } catch { /* spec probe is advisory only */ }
+    }
+
+    return base;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    clearTimeout(timer);
     if (e instanceof DOMException && e.name === 'AbortError') {
       return { state: 'fail', latencyMs: elapsed(), error: 'Timed out after 8s' };
     }
+    const msg = e instanceof Error ? e.message : String(e);
     return { state: 'fail', latencyMs: elapsed(), error: msg };
   }
 }
@@ -203,15 +237,40 @@ function UrlField({ label, hint, defaultUrl, value, onCommit, placeholder, test,
       </div>
       {error && <div className="text-xs text-error mt-1">{error}</div>}
       {test && test.state !== 'testing' && (
-        <div className={`text-xs mt-1 flex items-center gap-1.5 ${test.state === 'ok' ? 'text-secondary' : 'text-error'}`}>
-          <span className="material-symbols-outlined text-sm">{test.state === 'ok' ? 'check_circle' : 'error'}</span>
-          {test.state === 'ok'
-            ? `OK · ${test.latencyMs}ms${test.chainIdHex ? ` · chainId ${parseInt(test.chainIdHex, 16)}` : ''}`
-            : `Failed · ${test.error ?? 'unknown error'}`}
+        <div className="mt-1 space-y-1">
+          <div className={`text-xs flex items-center gap-1.5 ${test.state === 'ok' ? (test.specWarning ? 'text-warn' : 'text-secondary') : 'text-error'}`}>
+            <span className="material-symbols-outlined text-sm">
+              {test.state === 'ok' ? (test.specWarning ? 'warning' : 'check_circle') : 'error'}
+            </span>
+            {test.state === 'ok'
+              ? `OK · ${test.latencyMs}ms${test.chainIdHex ? ` · chainId ${formatChainId(test.chainIdHex, !!test.specVersion)}` : ''}${test.specVersion ? ` · spec ${test.specVersion}` : ''}`
+              : `Failed · ${test.error ?? 'unknown error'}`}
+          </div>
+          {test.specWarning && (
+            <div className="text-xs text-warn pl-5 leading-relaxed">{test.specWarning}</div>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+/** Starknet chainIds are ASCII-encoded shortstrings (e.g. 0x534e5f5345504f4c4941 = "SN_SEPOLIA"); decode them. EVM stays decimal. */
+function formatChainId(hex: string, isStarknet: boolean): string {
+  if (!isStarknet) return String(parseInt(hex, 16));
+  try {
+    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+    if (clean.length % 2 !== 0 || clean.length > 64) return hex;
+    let ascii = '';
+    for (let i = 0; i < clean.length; i += 2) {
+      const code = parseInt(clean.slice(i, i + 2), 16);
+      if (code < 32 || code > 126) return hex; // not printable → fall back to hex
+      ascii += String.fromCharCode(code);
+    }
+    return ascii || hex;
+  } catch {
+    return hex;
+  }
 }
 
 export function Settings(): JSX.Element {
@@ -457,13 +516,13 @@ export function Settings(): JSX.Element {
                     </button>
                   </div>
                   {tests[testKey] && tests[testKey].state !== 'testing' && (
-                    <div className={`text-xs flex items-center gap-1.5 ${tests[testKey].state === 'ok' ? 'text-secondary' : 'text-error'}`}>
+                    <div className={`text-xs flex items-center gap-1.5 flex-wrap ${tests[testKey].state === 'ok' ? 'text-secondary' : 'text-error'}`}>
                       <span className="material-symbols-outlined text-sm">{tests[testKey].state === 'ok' ? 'check_circle' : 'error'}</span>
                       {tests[testKey].state === 'ok'
                         ? `OK · ${tests[testKey].latencyMs}ms${tests[testKey].chainIdHex ? ` · chainId ${parseInt(tests[testKey].chainIdHex!, 16)}` : ''}`
                         : `Failed · ${tests[testKey].error ?? 'unknown error'}`}
                       {tests[testKey].state === 'ok' && tests[testKey].chainIdHex && parseInt(tests[testKey].chainIdHex!, 16) !== row.chainId && (
-                        <span className="ml-1" style={{ color: 'var(--warn)' }}>· chainId mismatch (expected {row.chainId})</span>
+                        <span className="text-warn">· chainId mismatch (expected {row.chainId})</span>
                       )}
                     </div>
                   )}

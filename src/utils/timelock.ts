@@ -55,9 +55,23 @@ export function operationStateLabel(state: number): OperationState {
   }
 }
 
-/** Generates a random bytes32 salt. */
+/** Generates a random 252-bit salt — fits both Solidity bytes32 and Starknet felt252. */
 export function randomSalt(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
+  bytes[0] &= 0x0f;
   return '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const FELT252_MAX = (1n << 252n) - 1n;
+
+/** True when `s` parses as a hex value in the Starknet felt252 range [0, 2^252-1]. */
+export function isFelt252(s: string): boolean {
+  const trimmed = s.trim();
+  if (!/^0x[0-9a-fA-F]+$/.test(trimmed)) return false;
+  try {
+    return BigInt(trimmed) <= FELT252_MAX;
+  } catch {
+    return false;
+  }
 }

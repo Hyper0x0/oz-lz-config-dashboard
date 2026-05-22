@@ -9,9 +9,10 @@ import { useCairoTimelock } from '@/hooks/useCairoTimelock';
 import { TxStatus } from '@/components/TxStatus';
 import { Section } from '@/components/Section';
 import { SwitchChainButton } from '@/components/ChainSwitch';
+import { CopyButton } from '@/components/CopyButton';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
-import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown } from '@/utils/timelock';
+import { hashOperation as localHashOp, formatDelay, randomSalt, formatCountdown, isFelt252 } from '@/utils/timelock';
 import OFTAdapterABI from '@/abis/evm/OFTAdapter.json';
 import OFTABI from '@/abis/evm/OFT.json';
 import EndpointV2ABI from '@/abis/evm/EndpointV2.json';
@@ -295,6 +296,10 @@ export function Timelock(): JSX.Element {
   const [lastOpHash, setLastOpHash] = useState<string | null>(null);
   useEffect(() => { if (freshOpHash) setLastOpHash(freshOpHash); }, [freshOpHash]);
   const opHash = freshOpHash ?? lastOpHash;
+
+  // ── Salt / predecessor felt252 validation (Starknet only) ────────────────
+  const saltInvalidForStarknet = chainType === 'starknet' && !!salt.trim() && !isFelt252(salt);
+  const predecessorInvalidForStarknet = chainType === 'starknet' && !!predecessor.trim() && !isFelt252(predecessor);
 
   // ── Check op state ────────────────────────────────────────────────────────
   const [lookupHash,  setLookupHash]  = useState('');
@@ -775,13 +780,31 @@ export function Timelock(): JSX.Element {
             <div className="flex-1">
               <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Salt</div>
               <div className="flex gap-2">
-                <input className="input flex-1" value={salt} onChange={(e) => setSalt(e.target.value)} />
+                <input
+                  className={`input flex-1 ${saltInvalidForStarknet ? 'border-warn' : ''}`}
+                  value={salt}
+                  onChange={(e) => setSalt(e.target.value)}
+                />
                 <button className="btn" onClick={() => setSalt(randomSalt())}>Rand</button>
               </div>
+              {saltInvalidForStarknet && (
+                <div className="text-[11px] text-warn mt-1 leading-snug">
+                  Out of felt252 range. Starknet requires salt &lt; 2<sup>252</sup>. Click <b>Rand</b> to regenerate.
+                </div>
+              )}
             </div>
             <div className="flex-1">
               <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Predecessor</div>
-              <input className="input" value={predecessor} onChange={(e) => setPredecessor(e.target.value)} />
+              <input
+                className={`input ${predecessorInvalidForStarknet ? 'border-warn' : ''}`}
+                value={predecessor}
+                onChange={(e) => setPredecessor(e.target.value)}
+              />
+              {predecessorInvalidForStarknet && (
+                <div className="text-[11px] text-warn mt-1 leading-snug">
+                  Out of felt252 range. Use 0x0 if there's no predecessor.
+                </div>
+              )}
             </div>
           </div>
 
@@ -815,8 +838,8 @@ export function Timelock(): JSX.Element {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">Operation hash</span>
                   <div className="flex gap-2">
-                    <button className="btn text-[11px] py-0.5 px-2" onClick={() => navigator.clipboard.writeText(opHash)}>Copy</button>
-                    <button className="btn text-[11px] py-0.5 px-2" onClick={() => setLookupHash(opHash)}>Use for lookup</button>
+                    <CopyButton value={opHash} label="Copy" className="btn btn-sm" />
+                    <button className="btn btn-sm" onClick={() => setLookupHash(opHash)}>Use for lookup</button>
                   </div>
                 </div>
                 <div className="font-mono text-xs text-primary break-all">{opHash}</div>
@@ -833,7 +856,7 @@ export function Timelock(): JSX.Element {
             ) : (
               <button className="btn btn-primary" onClick={handleSchedule}
                 disabled={chainType === 'starknet'
-                  ? !stark.isConnected || !starkSelector || !starkCalldata
+                  ? !stark.isConnected || !starkSelector || !starkCalldata || saltInvalidForStarknet || predecessorInvalidForStarknet
                   : !evm.isConnected || !calldata}>
                 Schedule{chainType === 'starknet' ? ' (Starknet)' : ''}
               </button>

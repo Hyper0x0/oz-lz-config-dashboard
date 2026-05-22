@@ -23,7 +23,8 @@ export const STARKNET_TESTNET = {
   eid: 40500,
   chainId: 'SN_SEPOLIA',
   name: 'Starknet Sepolia',
-  rpc: 'https://starknet-sepolia.drpc.org',
+  rpc: 'https://free-rpc.nethermind.io/sepolia-juno/v0_7',
+  rpcFallback: 'https://api.cartridge.gg/x/starknet/sepolia',
   endpoint: '0x0316d70a6e0445a58c486215fac8ead48d3db985acde27efca9130da4c675878',
   chainKey: 'starknet-sepolia',
   // SendUln302 = ReceiveUln302 on Starknet (same contract)

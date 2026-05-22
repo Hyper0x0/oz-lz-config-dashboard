@@ -56,6 +56,8 @@ export default {
         'error-container':          '#9f0519',
         'on-error':                 '#490006',
         'on-error-container':       '#ffa8a3',
+        'warn':                     '#ffd93d',
+        'warn-container':           'rgba(255, 217, 61, 0.08)',
       },
       fontFamily: {
         headline: ['"Space Grotesk"', 'sans-serif'],
