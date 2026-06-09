@@ -15,6 +15,8 @@ import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
 import { WalletChainHint } from '@/components/ChainSwitch';
 import { Spinner } from '@/components/Spinner';
+import { Section } from '@/components/Section';
+import { PageLayout } from '@/components/PageLayout';
 
 type Tab = 'verify' | 'configure';
 type WiringMode = 'bridge-oft' | 'oft-oft';
@@ -324,22 +326,11 @@ export function OFTWiring(): JSX.Element {
   }
 
   return (
-    <div className="grid grid-cols-12 gap-6">
-
-      {/* ── Left: main content ── */}
-      <div className="col-span-12 lg:col-span-8 space-y-6">
+    <PageLayout
+      main={<>
 
         {/* Pathway Configuration */}
-        <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-lg">route</span>
-            </div>
-            <div>
-              <h3 className="font-headline text-base font-bold text-on-surface">Pathway Configuration</h3>
-              <p className="text-[11px] text-on-surface-variant">Select chains and contract addresses</p>
-            </div>
-          </div>
+        <Section icon="route" title="Pathway Configuration" subtitle="Select chains and contract addresses">
 
           {/* Network toggle + wiring mode */}
           <div className="flex gap-2 items-center mb-5 flex-wrap">
@@ -457,7 +448,7 @@ export function OFTWiring(): JSX.Element {
           {tokenInfoError && (
             <div className="text-xs text-error mt-3">{tokenInfoError}</div>
           )}
-        </section>
+        </Section>
 
         {/* Verify + Configure tabs — shown for all chain combinations */}
         {(bothEvm || hasStarknet) && (
@@ -494,27 +485,22 @@ export function OFTWiring(): JSX.Element {
             )}
           </>
         )}
-      </div>{/* end left column */}
-
-      {/* Right sidebar: Connected Peers */}
-      <div className="col-span-12 lg:col-span-4">
-        <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6 sticky top-6">
-          <PeersSidebar
-            peers={peers}
-            scanning={peersScanning}
-            error={peersError}
-            canScan={canScanPeers}
-            bridgeAddr={homeAddr}
-            bridgeLabel={isStarknet(home) ? 'Cairo OFT' : homeLabel}
-            chainName={home.name}
-            isTestnet={isTestnet}
-            progress={peersProgress}
-            onScan={() => handleScanPeers({ force: true })}
-          />
-        </div>
-      </div>
-
-    </div>
+      </>}
+      sidebar={
+        <PeersSidebar
+          peers={peers}
+          scanning={peersScanning}
+          error={peersError}
+          canScan={canScanPeers}
+          bridgeAddr={homeAddr}
+          bridgeLabel={isStarknet(home) ? 'Cairo OFT' : homeLabel}
+          chainName={home.name}
+          isTestnet={isTestnet}
+          progress={peersProgress}
+          onScan={() => handleScanPeers({ force: true })}
+        />
+      }
+    />
   );
 }
 
@@ -835,14 +821,9 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
   const done = !checking && (evmState !== null || starkState !== null);
 
   return (
-    <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-      <div className="flex justify-between items-center mb-4">
-        <div>
-          <h3 className="font-headline text-base font-bold text-on-surface m-0">Pathway verification</h3>
-          <span className="text-xs text-on-surface-variant">
-            {home.name} (EID {home.eid}) ↔ {remote.name} (EID {remote.eid})
-          </span>
-        </div>
+    <Section icon="fact_check" title="Pathway verification"
+      subtitle={`${home.name} (EID ${home.eid}) ↔ ${remote.name} (EID ${remote.eid})`}
+      actions={
         <div className="flex gap-2">
           {(evmState || starkState) && (
             <button className="btn btn-ghost text-xs" onClick={() => {
@@ -876,7 +857,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             {checking ? 'Checking…' : 'Run checks'}
           </button>
         </div>
-      </div>
+      }>
 
       {!done && !checking && (
         <p className="text-xs text-on-surface-variant">
@@ -991,7 +972,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
           )}
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -1014,12 +995,8 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
   const [showAll, setShowAll] = useState(false);
 
   return (
-    <div className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="font-headline text-sm font-bold text-on-surface">Connected Peers</div>
-          <div className="text-[11px] text-on-surface-variant mt-0.5">{chainName || 'select source chain'}</div>
-        </div>
+    <Section icon="hub" title="Connected Peers" subtitle={chainName || 'select source chain'}
+      actions={
         <button
           className="btn btn-primary text-[12px] py-1 px-2.5"
           disabled={!canScan || scanning}
@@ -1028,7 +1005,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
         >
           {scanning ? <><Spinner size="sm" /> Scanning…</> : 'Scan'}
         </button>
-      </div>
+      }>
 
       {!peers && !scanning && !error && (
         <div className="text-xs text-on-surface-variant text-center py-5">
@@ -1094,7 +1071,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
           )}
         </>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -1209,14 +1186,9 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
   const [showPassed, setShowPassed] = useState(false);
 
   return (
-    <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-6">
-      <div className="flex justify-between items-center mb-4">
-        <div>
-          <h3 className="font-headline text-base font-bold text-on-surface m-0">Pathway verification</h3>
-          <span className="text-xs text-on-surface-variant">
-            {homeChain.name} ↔ {remoteChain.name} — bidirectional
-          </span>
-        </div>
+    <Section icon="fact_check" title="Pathway verification"
+      subtitle={`${homeChain.name} ↔ ${remoteChain.name} — bidirectional`}
+      actions={
         <div className="flex gap-2">
           {result && !result.error && (
             <button className="btn btn-ghost text-xs" onClick={() => exportEvmConfig(result, homeChain.name, remoteChain.name, homeAddress, remoteAddress)}>
@@ -1227,7 +1199,7 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
             {verifying ? 'Checking…' : 'Re-run checks'}
           </button>
         </div>
-      </div>
+      }>
 
       {!result && !verifying && (
         <p className="text-xs text-on-surface-variant">
@@ -1336,7 +1308,7 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
           </details>
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
