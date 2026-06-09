@@ -42,8 +42,11 @@ export function OFTs(): JSX.Element {
 
   const defaultEvm0 = evmChains[0] ?? { eid: 0, chainId: 0, name: '', chainKey: '', endpoint: '', rpc: '', isTestnet: true } as LZChain;
   const defaultEvm1 = evmChains[1] ?? defaultEvm0;
-  const home: AnyChain = homeChain ?? toAnyEvm(defaultEvm0);
-  const remote: AnyChain = remoteChain ?? toAnyEvm(defaultEvm1);
+  // Default the source chain to the connected wallet's chain, so navigating between pages keeps
+  // the chain you're on instead of snapping back to the first chain in the list.
+  const walletEvmChain = evm.isConnected ? evmChains.find((c) => c.chainId === evm.chainId) : undefined;
+  const home: AnyChain = homeChain ?? toAnyEvm(walletEvmChain ?? defaultEvm0);
+  const remote: AnyChain = remoteChain ?? toAnyEvm(evmChains.find((c) => c.eid !== home.eid) ?? defaultEvm1);
 
   const [mode, setMode] = useState<WiringMode>('bridge-oft');
   const [detectedHome, setDetectedHome] = useState<'adapter' | 'oft' | null>(null);
