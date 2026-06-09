@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { JsonRpcProvider, Interface, FunctionFragment } from 'ethers';
+import { JsonRpcProvider, Interface, FunctionFragment, keccak256, toUtf8Bytes } from 'ethers';
 import TimelockControllerABI from '@/abis/evm/TimelockController.json';
 import timelockTarget from '@/config/timelockTarget.json';
 import timelockTargetStarknet from '@/config/timelockTargetStarknet.json';
@@ -242,12 +242,25 @@ export function Timelock(): JSX.Element {
   const [fnArgs, setFnArgs] = useState<string[]>(() =>
     uiFunctions[0] ? uiFunctions[0].inputs.map(() => '') : [],
   );
+  // Per-arg toggle: hash the value as keccak256(utf8(string)) instead of treating it as raw
+  // bytes32. Defaults ON for key-named bytes32 args, e.g. setContractAddress(keccak256("Hub"), …).
+  const [argKeccak, setArgKeccak] = useState<boolean[]>([]);
   useEffect(() => {
     setFnArgs(currentFn ? currentFn.inputs.map(() => '') : []);
+    setArgKeccak(currentFn
+      ? currentFn.inputs.map((inp) => inp.type === 'bytes32' && /key/i.test(inp.name))
+      : []);
   }, [selectedFn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function setArg(i: number, value: string) {
     setFnArgs((prev) => { const next = [...prev]; next[i] = value; return next; });
+  }
+  function setArgKeccakAt(i: number, on: boolean) {
+    setArgKeccak((prev) => { const next = [...prev]; next[i] = on; return next; });
+  }
+  /** Resolve a bytes32 arg's raw value, applying keccak256(utf8) when its toggle is on. */
+  function resolveBytes32(value: string, i: number): string {
+    return argKeccak[i] ? keccak256(toUtf8Bytes(value)) : value;
   }
 
   // ── Calldata encoding ─────────────────────────────────────────────────────
@@ -280,13 +293,16 @@ export function Timelock(): JSX.Element {
     if (fnArgs.some((v) => v === '' && currentFn.inputs[fnArgs.indexOf(v)]?.type !== 'string'))
       return { calldata: null, calldataError: null, starkSelector: null, starkCalldata: null };
     try {
-      const parsed = fnArgs.map((v, i) => parseArg(v, currentFn.inputs[i].type));
+      const parsed = fnArgs.map((v, i) => {
+        const t = currentFn.inputs[i].type;
+        return t === 'bytes32' ? resolveBytes32(v, i) : parseArg(v, t);
+      });
       const data = TARGET_IFACE.encodeFunctionData(currentFn.name, parsed);
       return { calldata: data, calldataError: null, starkSelector: null, starkCalldata: null };
     } catch (e) {
       return { calldata: null, calldataError: e instanceof Error ? e.message : String(e), starkSelector: null, starkCalldata: null };
     }
-  }, [currentFn, fnArgs, chainType]);
+  }, [currentFn, fnArgs, argKeccak, chainType]);
 
   // ── Timelock params ───────────────────────────────────────────────────────
   const [delay,       setDelay]       = useState('172800');
@@ -806,6 +822,30 @@ export function Timelock(): JSX.Element {
                               <option key={val} value={String(val)}>{label} ({val})</option>
                             ))}
                         </select>
+                      ) : chainType === 'evm' && input.type === 'bytes32' ? (
+                        <>
+                          <input
+                            className="input"
+                            value={fnArgs[i] ?? ''}
+                            onChange={(e) => setArg(i, e.target.value)}
+                            spellCheck={false}
+                            placeholder={argKeccak[i] ? 'Hub' : '0x… (32 bytes)'}
+                          />
+                          <label className="flex items-center gap-1.5 mt-1.5 text-[11px] text-on-surface-variant cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="accent-primary"
+                              checked={argKeccak[i] ?? false}
+                              onChange={(e) => setArgKeccakAt(i, e.target.checked)}
+                            />
+                            Hash as keccak256(string)
+                          </label>
+                          {argKeccak[i] && (fnArgs[i] ?? '') !== '' && (
+                            <div className="font-mono text-[10px] text-primary/70 mt-1 break-all">
+                              = {(() => { try { return keccak256(toUtf8Bytes(fnArgs[i])); } catch { return '—'; } })()}
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <input
                           className="input"

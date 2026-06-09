@@ -4,6 +4,16 @@
   "abi": [
     {
       "type": "function",
+      "name": "setContractAddress",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "_key",  "type": "bytes32" },
+        { "name": "_addr", "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
       "name": "registerVault",
       "stateMutability": "nonpayable",
       "inputs": [
