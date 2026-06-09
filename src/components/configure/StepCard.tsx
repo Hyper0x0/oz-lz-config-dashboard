@@ -1,4 +1,6 @@
 import type { StepStatus } from './types';
+import { StatusIcon } from '../Icon';
+import { Spinner } from '../Spinner';
 
 interface Props {
   n: number;
@@ -16,10 +18,10 @@ function statusBadge(status: StepStatus): React.ReactNode {
   const anyPending = status.home === 'pending' || status.remote === 'pending';
   const anyError = status.home === 'error' || status.remote === 'error';
 
-  if (anyPending) return <span className="text-[11px] text-[var(--accent)] animate-pulse">⏳</span>;
-  if (anyError) return <span className="text-[11px] text-[var(--error)]">✗</span>;
-  if (homeDone && remoteDone) return <span className="text-[11px] text-[var(--secondary)]">✓</span>;
-  if (homeDone || remoteDone) return <span className="text-[11px] text-[var(--warn)]">½</span>;
+  if (anyPending) return <Spinner size="sm" className="text-primary" />;
+  if (anyError) return <StatusIcon kind="error" size={15} />;
+  if (homeDone && remoteDone) return <StatusIcon kind="success" size={15} />;
+  if (homeDone || remoteDone) return <span className="text-[11px] text-warn font-bold">½</span>;
   return null;
 }
 

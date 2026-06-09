@@ -22,26 +22,30 @@ export function hashOperation(
  * @param seconds - delay in seconds
  * @returns human-readable string like "2d 4h 30m"
  */
-export function formatDelay(seconds: number): string {
+export function formatDelay(seconds: number, showSeconds = false): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
   const parts: string[] = [];
   if (d > 0) parts.push(`${d}d`);
   if (h > 0) parts.push(`${h}h`);
   if (m > 0) parts.push(`${m}m`);
-  return parts.length > 0 ? parts.join(' ') : '< 1m';
+  // Only surface seconds in the final hour, where a live tick is meaningful.
+  if (showSeconds && d === 0 && h === 0) parts.push(`${s}s`);
+  return parts.length > 0 ? parts.join(' ') : (showSeconds ? '0s' : '< 1m');
 }
 
 /**
  * @param eta - Unix timestamp (seconds) when the operation becomes ready
+ * @param live - include seconds when under an hour (for ticking countdowns)
  * @returns human-readable countdown or "Ready"
  */
-export function formatCountdown(eta: number): string {
+export function formatCountdown(eta: number, live = false): string {
   const now = Math.floor(Date.now() / 1000);
   const remaining = eta - now;
   if (remaining <= 0) return 'Ready';
-  return `Ready in ${formatDelay(remaining)}`;
+  return `Ready in ${formatDelay(remaining, live && remaining < 3600)}`;
 }
 
 /** Maps TimelockController.OperationState uint8 to a readable label. */

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import packageJson from '../../package.json';
 import { Section } from '@/components/Section';
+import { Spinner } from '@/components/Spinner';
 import { useLZChains } from '@/hooks/useLZChains';
 import { useToast } from '@/context/ToastContext';
 
@@ -231,7 +232,7 @@ function UrlField({ label, hint, defaultUrl, value, onCommit, placeholder, test,
           title={active ? `Test ${active}` : 'No URL to test'}
         >
           {test?.state === 'testing'
-            ? <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span></>
+            ? <Spinner size="sm" />
             : <><span className="material-symbols-outlined text-sm">network_check</span> Test</>
           }
         </button>
@@ -495,7 +496,7 @@ export function Settings(): JSX.Element {
                       title={row.url ? `Test ${row.url}` : 'Enter a URL first'}
                     >
                       {tests[testKey]?.state === 'testing'
-                        ? <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                        ? <Spinner size="sm" />
                         : <span className="material-symbols-outlined text-sm">network_check</span>}
                     </button>
                     <button

@@ -54,7 +54,7 @@ interface OFTWiring {
   readAdapterState: (adapterAddr: string, peerEid: number, homeRpc: string, homeChainId?: number) => Promise<AdapterState>;
   readPeerState: (peerAddr: string, adapterEid: number, remoteRpc: string, remoteChainId?: number) => Promise<PeerState>;
   /** Query peers(eid) for every entry in eidList and return results. Zero bytes32 = null. */
-  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number) => Promise<PeerEntry[]>;
+  readAllPeers: (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number, onProgress?: (done: number, total: number) => void) => Promise<PeerEntry[]>;
   setEvmPeer: (contractAddr: string, peerEid: number, peerAddr: string) => Promise<TxState>;
   setEvmEnforcedOptions: (contractAddr: string, peerEid: number, gas: bigint) => Promise<TxState>;
   setRateLimit: (adapterAddr: string, dstEid: number, limit: bigint, window: number) => Promise<TxState>;
@@ -190,12 +190,16 @@ export function useOFTWiring(evmSigner: JsonRpcSigner | null): OFTWiring {
   );
 
   const readAllPeers = useCallback(
-    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number): Promise<PeerEntry[]> => {
+    async (bridgeAddr: string, homeRpc: string, eidList: Array<{ eid: number; name: string }>, walletProvider?: BrowserProvider, chainId?: number, onProgress?: (done: number, total: number) => void): Promise<PeerEntry[]> => {
       const provider = walletProvider ?? staticProvider(homeRpc, chainId);
       const c = adapterContract(bridgeAddr, provider);
       // Bounded concurrency + single retry — public RPCs throttle dozens of parallel calls,
       // which previously dropped random entries (often the Stark one at the tail of the array).
-      const settled = await mapLimit(eidList, 4, (item) => withRetry(() => c.peers(item.eid)));
+      let done = 0;
+      const settled = await mapLimit(eidList, 4, async (item) => {
+        try { return await withRetry(() => c.peers(item.eid)); }
+        finally { onProgress?.(++done, eidList.length); }
+      });
       const ZERO = /^0x0+$/;
       return eidList.map((item, i) => {
         const res = settled[i];

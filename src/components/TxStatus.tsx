@@ -1,5 +1,7 @@
 import { Interface } from 'ethers';
 import type { TxState, TxErrorDetails } from '@/types';
+import { Icon, StatusIcon, ICONS } from './Icon';
+import { Spinner } from './Spinner';
 
 function downloadJson(data: Record<string, unknown>, filename: string): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -155,8 +157,8 @@ export function TxStatus({ state, explorerUrl, showLzScan }: Props): JSX.Element
 
   if (state.status === 'pending') {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 13, color: 'var(--accent)' }}>
-        <span className="animate-pulse">⏳</span> Transaction pending…
+      <div className="flex items-center gap-1.5 mt-2 text-[13px] text-primary">
+        <Spinner size="sm" /> Transaction pending…
       </div>
     );
   }
@@ -165,18 +167,20 @@ export function TxStatus({ state, explorerUrl, showLzScan }: Props): JSX.Element
     const url = explorerUrl ? `${explorerUrl}${state.hash}` : null;
     const lzScanUrl = `https://layerzeroscan.com/tx/${state.hash}`;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
-        <span style={{ color: 'var(--secondary)' }}>✓ Confirmed</span>
+      <div className="flex items-center gap-2 flex-wrap mt-2 text-[13px]">
+        <span className="inline-flex items-center gap-1 text-secondary">
+          <StatusIcon kind="success" size={15} /> Confirmed
+        </span>
         {url && (
           <a href={url} target="_blank" rel="noreferrer"
-            style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-            View on Explorer ↗
+            className="inline-flex items-center gap-0.5 text-primary no-underline text-xs font-mono hover:text-primary-dim">
+            View on Explorer <Icon name={ICONS.external} size={13} />
           </a>
         )}
         {showLzScan && (
           <a href={lzScanUrl} target="_blank" rel="noreferrer"
-            style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-            LayerZero Scan ↗
+            className="inline-flex items-center gap-0.5 text-primary no-underline text-xs font-mono hover:text-primary-dim">
+            LayerZero Scan <Icon name={ICONS.external} size={13} />
           </a>
         )}
       </div>
@@ -186,16 +190,19 @@ export function TxStatus({ state, explorerUrl, showLzScan }: Props): JSX.Element
   // error
   const revertHint = decodeRevert(state.message);
   return (
-    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--error)', lineHeight: 1.5 }}>
+    <div className="mt-2 text-[13px] text-error leading-normal">
       {revertHint && (
-        <div style={{ marginBottom: 4, padding: '4px 8px', background: 'var(--error-container, rgba(255,0,0,0.08))', borderRadius: 4, fontSize: 12 }}>
+        <div className="mb-1 px-2 py-1 bg-error/8 rounded text-xs">
           {revertHint}
         </div>
       )}
-      <div>✗ {state.message.length > 200 ? state.message.slice(0, 200) + '…' : state.message}</div>
+      <div className="flex items-start gap-1.5">
+        <StatusIcon kind="error" size={15} className="mt-0.5 flex-shrink-0" />
+        <span>{state.message.length > 200 ? state.message.slice(0, 200) + '…' : state.message}</span>
+      </div>
       <button
         onClick={() => exportError(state.message, state.details)}
-        style={{ marginTop: 4, fontSize: 11, color: 'var(--error)', background: 'none', border: '1px solid currentColor', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', opacity: 0.8 }}
+        className="mt-1 text-[11px] text-error bg-transparent border border-current rounded px-2 py-0.5 cursor-pointer opacity-80 hover:opacity-100"
       >
         Export error details
       </button>

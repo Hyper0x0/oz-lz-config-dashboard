@@ -14,6 +14,7 @@ import type { PathwayVerifyResult, TokenInfo, PeerEntry, UlnConfig, ExecutorConf
 import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
 import { WalletChainHint } from '@/components/ChainSwitch';
+import { Spinner } from '@/components/Spinner';
 
 type Tab = 'verify' | 'configure';
 type WiringMode = 'bridge-oft' | 'oft-oft';
@@ -88,6 +89,11 @@ export function OFTWiring(): JSX.Element {
   const [peers, setPeers] = useState<PeerEntry[] | null>(null);
   const [peersScanning, setPeersScanning] = useState(false);
   const [peersError, setPeersError] = useState<string | null>(null);
+  const [peersProgress, setPeersProgress] = useState<{ done: number; total: number } | null>(null);
+  // Cache scan results per `${address}:${network}` so re-selecting a chain / re-typing a
+  // known address is instant and doesn't re-hit RPCs.
+  const peerCache = useRef<Map<string, PeerEntry[]>>(new Map());
+  const peerScanTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const starkHome = isStarknet(home) ? home : null;
   const canScanPeers = !!homeAddr && homeAddr !== '0x' && (!!evmHome || !!starkHome);
@@ -148,32 +154,57 @@ export function OFTWiring(): JSX.Element {
     return () => clearTimeout(detectTimer.current);
   }, [homeAddr, remoteAddr, evmHome?.rpc, evmRemote?.rpc, home.eid, remote.eid]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleScanPeers(): Promise<void> {
+  /** Cache key isolates results per address + network (testnet vs mainnet). */
+  const peerCacheKey = (addr: string): string => `${addr.toLowerCase()}:${isTestnet ? 't' : 'm'}`;
+
+  async function handleScanPeers(opts?: { force?: boolean }): Promise<void> {
     if (!canScanPeers) return;
+    const cached = peerCache.current.get(peerCacheKey(homeAddr));
+    if (cached && !opts?.force) {
+      setPeers(cached);
+      setPeersError(null);
+      return;
+    }
     setPeersScanning(true);
     setPeers(null);
     setPeersError(null);
+    setPeersProgress({ done: 0, total: 0 });
+    const onProgress = (done: number, total: number) => setPeersProgress({ done, total });
     try {
       const sc = starkChain(isTestnet);
       const starkEntry = { eid: sc.eid, name: sc.name, chainKey: sc.chainKey };
+      let result: PeerEntry[] | null = null;
       if (evmHome) {
         const evmEntries = evmChains
           .filter((c) => c.eid !== evmHome.eid)
           .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
         const wp = evm.provider && evm.chainId === evmHome.chainId ? evm.provider : undefined;
-        const result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry], wp, evmHome.chainId);
-        setPeers(result);
+        result = await wiring.readAllPeers(homeAddr, evmHome.rpc, [...evmEntries, starkEntry], wp, evmHome.chainId, onProgress);
       } else if (starkHome) {
         const evmEntries = evmChains
           .map((c) => ({ eid: c.eid, name: c.name, chainKey: c.chainKey }));
-        const result = await cairo.readAllPeers(homeAddr, evmEntries, starkHome.rpc);
+        result = await cairo.readAllPeers(homeAddr, evmEntries, starkHome.rpc, onProgress);
+      }
+      if (result) {
+        peerCache.current.set(peerCacheKey(homeAddr), result);
         setPeers(result);
       }
     } catch (e) {
       setPeersError(e instanceof Error ? e.message : String(e));
     }
     setPeersScanning(false);
+    setPeersProgress(null);
   }
+
+  // Auto-scan peers when a valid home address settles (debounced 1.5s). Cache hits resolve instantly.
+  useEffect(() => {
+    clearTimeout(peerScanTimer.current);
+    if (!canScanPeers || !isAddr(homeAddr)) return;
+    const cached = peerCache.current.get(peerCacheKey(homeAddr));
+    if (cached) { setPeers(cached); return; }
+    peerScanTimer.current = setTimeout(() => { void handleScanPeers(); }, 1500);
+    return () => clearTimeout(peerScanTimer.current);
+  }, [homeAddr, isTestnet, canScanPeers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const homeLabel = detectedHome === 'adapter' ? 'Adapter' : detectedHome === 'oft' ? 'OFT' : (mode === 'bridge-oft' ? 'Adapter' : 'OFT');
   const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
@@ -477,7 +508,8 @@ export function OFTWiring(): JSX.Element {
             bridgeLabel={isStarknet(home) ? 'Cairo OFT' : homeLabel}
             chainName={home.name}
             isTestnet={isTestnet}
-            onScan={handleScanPeers}
+            progress={peersProgress}
+            onScan={() => handleScanPeers({ force: true })}
           />
         </div>
       </div>
@@ -603,12 +635,12 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect, disabledEid 
   const selectedChainKey = isSelectedStark ? '' : (selected as LZChain).chainKey;
   const displayName = `${selected.name} — EID ${selected.eid}`;
 
-  const snMonogram = <span className="w-[18px] h-[18px] rounded-full bg-[#919bff22] border border-[#919bff55] flex-shrink-0 inline-flex items-center justify-center text-[9px] text-[#919bff] font-bold">SN</span>;
+  const snMonogram = <span className="w-[18px] h-[18px] rounded-full bg-tertiary/15 border border-tertiary/30 flex-shrink-0 inline-flex items-center justify-center text-[9px] text-tertiary font-bold">SN</span>;
 
   return (
     <div ref={ref} className="relative">
       <button
-        className={`input text-left cursor-pointer flex items-center gap-2 justify-between ${isSelectedStark ? 'border-[#2a2a5a] text-[#919bff]' : ''}`}
+        className={`input text-left cursor-pointer flex items-center gap-2 justify-between ${isSelectedStark ? 'border-tertiary/40 text-tertiary' : ''}`}
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
@@ -627,7 +659,7 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect, disabledEid 
             onClick={() => { if (disabledEid !== stark.eid) { onSelect(stark); setOpen(false); } }}
           >
             {snMonogram}
-            <span className={isSelectedStark ? 'text-[#919bff]' : 'text-[#919bff88]'}>{stark.name}</span>
+            <span className={isSelectedStark ? 'text-tertiary' : 'text-tertiary/60'}>{stark.name}</span>
             <span className="text-[11px] text-on-surface-variant ml-auto">EID {stark.eid}</span>
           </div>
 
@@ -965,7 +997,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
 
 // ── Peers sidebar ─────────────────────────────────────────────────────────────
 
-function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel = 'Adapter', chainName, isTestnet, onScan }: {
+function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel = 'Adapter', chainName, isTestnet, progress, onScan }: {
   peers: PeerEntry[] | null;
   scanning: boolean;
   error: string | null;
@@ -974,6 +1006,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
   bridgeLabel?: string;
   chainName: string;
   isTestnet: boolean;
+  progress: { done: number; total: number } | null;
   onScan: () => void;
 }): JSX.Element {
   const connected = peers?.filter((p) => p.peer !== null) ?? [];
@@ -993,7 +1026,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
           onClick={onScan}
           title={!canScan ? 'Enter a contract address and select source chain first' : ''}
         >
-          {scanning ? 'Scanning…' : 'Scan'}
+          {scanning ? <><Spinner size="sm" /> Scanning…</> : 'Scan'}
         </button>
       </div>
 
@@ -1004,8 +1037,18 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
       )}
 
       {scanning && (
-        <div className="text-xs text-on-surface-variant text-center py-5">
-          Querying {isTestnet ? 'testnet' : 'mainnet'} chains…
+        <div className="py-5">
+          <div className="text-xs text-on-surface-variant flex items-center justify-center gap-1.5">
+            <Spinner size="sm" />
+            Querying {isTestnet ? 'testnet' : 'mainnet'} chains
+            {progress && progress.total > 0 && <span className="font-mono tabular-nums"> {progress.done}/{progress.total}</span>}
+          </div>
+          {progress && progress.total > 0 && (
+            <div className="mt-2 h-1 rounded-full bg-surface-container overflow-hidden">
+              <div className="h-full bg-primary transition-all duration-200"
+                style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+            </div>
+          )}
         </div>
       )}
 
@@ -1067,7 +1110,7 @@ function PeerRow({ entry }: { entry: PeerEntry }): JSX.Element {
     displayPeer = '0x' + entry.peer.slice(-40);
   }
 
-  const snMonogram = <span className="w-[16px] h-[16px] rounded-full bg-[#919bff22] border border-[#919bff55] flex-shrink-0 inline-flex items-center justify-center text-[8px] text-[#919bff] font-bold">SN</span>;
+  const snMonogram = <span className="w-[16px] h-[16px] rounded-full bg-tertiary/15 border border-tertiary/30 flex-shrink-0 inline-flex items-center justify-center text-[8px] text-tertiary font-bold">SN</span>;
 
   return (
     <div className={`flex flex-col gap-0.5 p-2 mb-1.5 rounded-lg border ${isSet ? 'bg-secondary/5 border-secondary/20' : 'bg-surface-container border-outline-variant/10 opacity-40'}`}>

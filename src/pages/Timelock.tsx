@@ -12,6 +12,8 @@ import { SwitchChainButton } from '@/components/ChainSwitch';
 import { CopyButton } from '@/components/CopyButton';
 import { AddressPill } from '@/components/AddressPill';
 import { StickyAction } from '@/components/StickyAction';
+import { Spinner } from '@/components/Spinner';
+import { Icon, ICONS } from '@/components/Icon';
 import { useToast } from '@/context/ToastContext';
 import { CONTRACTS, ARBISCAN_API_KEY, STARKNET_TESTNET, STARKNET_MAINNET } from '@/config/chains';
 import { getStarknetMainnetRpc, getStarknetSepoliaRpc } from '@/pages/Settings';
@@ -121,12 +123,31 @@ interface ScannedOp {
   salt: string;
   state: OperationState;
   eta: string | null;
+  /** Unix seconds when a Waiting op becomes Ready. Drives the live countdown. */
+  readyAt: number | null;
   txHash: string;
   kind: 'evm' | 'starknet';
   /** Starknet only: selector of the inner call. */
   cairoSelector?: string;
   /** Starknet only: felt252 calldata for the inner call. */
   cairoCalldata?: string[];
+}
+
+/** Re-renders on a shared 1s tick so countdowns stay current without per-op timers. */
+function useNow(intervalMs = 1000): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+}
+
+/** Live "Ready in …" countdown that ticks every second and flips to "Ready" at zero. */
+function LiveCountdown({ readyAt, className }: { readyAt: number; className?: string }): JSX.Element {
+  useNow(1000);
+  const remaining = readyAt - Math.floor(Date.now() / 1000);
+  if (remaining <= 0) return <span className={className}>Ready now</span>;
+  return <span className={className}>{formatCountdown(readyAt, true)}</span>;
 }
 
 function StateBadge({ state }: { state: OperationState }): JSX.Element {
@@ -323,6 +344,7 @@ export function Timelock(): JSX.Element {
   const [lookupHash,  setLookupHash]  = useState('');
   const [opState,     setOpState]     = useState<OperationState | null>(null);
   const [opEta,       setOpEta]       = useState<string | null>(null);
+  const [opReadyAt,   setOpReadyAt]   = useState<number | null>(null);
   const [lookupDebug, setLookupDebug] = useState<string | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
@@ -345,6 +367,7 @@ export function Timelock(): JSX.Element {
 
   const [scannedOps,   setScannedOps]   = useState<ScannedOp[]>([]);
   const [scanning,     setScanning]     = useState(false);
+  const [scanProgress, setScanProgress] = useState<{ label: string; done: number; total: number } | null>(null);
   const [scanError,    setScanError]    = useState<string | null>(null);
   const [scanFromBlock, setScanFromBlock] = useState('');
   const [opFilter, setOpFilter] = useState<'all' | 'Waiting' | 'Ready' | 'Done'>('all');
@@ -382,7 +405,7 @@ export function Timelock(): JSX.Element {
 
   async function handleLookup(): Promise<void> {
     if (!timelockAddr || !lookupHash) return;
-    setOpState(null); setOpEta(null); setLookupDebug(null); setLookupError(null);
+    setOpState(null); setOpEta(null); setOpReadyAt(null); setLookupDebug(null); setLookupError(null);
     try {
       if (chainType === 'starknet') {
         const id = toFeltHex(lookupHash);
@@ -391,6 +414,7 @@ export function Timelock(): JSX.Element {
         if (state === 'Waiting') {
           const ts = await cairoOps.getTimestamp(timelockAddr, id, starkChain.rpc);
           setOpEta(formatCountdown(Number(ts)));
+          setOpReadyAt(Number(ts));
         }
         setLookupDebug(`contract: ${timelockAddr} | id: ${id.slice(0, 14)}… | chain: ${starkChain.name}`);
       } else {
@@ -406,7 +430,7 @@ export function Timelock(): JSX.Element {
         else if (tsNum <= now) state = 'Ready';
         else state = 'Waiting';
         setOpState(state);
-        if (state === 'Waiting') setOpEta(formatCountdown(tsNum));
+        if (state === 'Waiting') { setOpEta(formatCountdown(tsNum)); setOpReadyAt(tsNum); }
       }
     } catch (e) {
       setLookupError(e instanceof Error ? e.message : String(e));
@@ -473,6 +497,7 @@ export function Timelock(): JSX.Element {
   async function handleScan(): Promise<void> {
     if (!timelockAddr) return;
     setScanning(true); setScanError(null); setScannedOps([]);
+    setScanProgress({ label: 'Fetching events…', done: 0, total: 0 });
     try {
       const iface = new Interface(TimelockControllerABI);
       const scheduledTopic = iface.getEvent('CallScheduled')!.topicHash;
@@ -530,6 +555,7 @@ export function Timelock(): JSX.Element {
       }
       const now = Math.floor(Date.now() / 1000);
       const wp = evm.provider ?? undefined;
+      setScanProgress({ label: 'Resolving operations', done: 0, total: active.length });
       const results: ScannedOp[] = await Promise.all(active.map(async (op) => {
         const ts = await ops.getTimestamp(timelockAddr, op.id, wp);
         const tsNum = Number(ts);
@@ -538,19 +564,22 @@ export function Timelock(): JSX.Element {
         else if (tsNum === 1) state = 'Done';
         else if (tsNum <= now) state = 'Ready';
         else state = 'Waiting';
-        return { ...op, kind: 'evm' as const, state, eta: state === 'Waiting' ? formatCountdown(tsNum) : null };
+        setScanProgress((p) => p ? { ...p, done: p.done + 1 } : p);
+        return { ...op, kind: 'evm' as const, state, eta: state === 'Waiting' ? formatCountdown(tsNum) : null, readyAt: state === 'Waiting' ? tsNum : null };
       }));
       setScannedOps(results);
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
     } finally {
       setScanning(false);
+      setScanProgress(null);
     }
   }
 
   async function handleStarknetScan(): Promise<void> {
     if (!timelockAddr) return;
     setScanning(true); setScanError(null); setScannedOps([]);
+    setScanProgress({ label: 'Fetching events…', done: 0, total: 0 });
     try {
       // Resolve from-block: user input first, otherwise (latest - 100k blocks).
       let fromBlock: number | undefined;
@@ -637,22 +666,25 @@ export function Timelock(): JSX.Element {
 
       // Resolve state via on-chain getTimestamp, mirroring the EVM path.
       const now = Math.floor(Date.now() / 1000);
+      setScanProgress({ label: 'Resolving operations', done: 0, total: active.length });
       const results: ScannedOp[] = await Promise.all(active.map(async (op) => {
         let state: OperationState = 'Unset';
         let eta: string | null = null;
+        let readyAt: number | null = null;
         try {
           const ts = await cairoOps.getTimestamp(timelockAddr, op.id, starkChain.rpc);
           const tsNum = Number(ts);
           if (tsNum === 0) state = 'Unset';
           else if (tsNum === 1) state = 'Done';
           else if (tsNum <= now) state = 'Ready';
-          else { state = 'Waiting'; eta = formatCountdown(tsNum); }
+          else { state = 'Waiting'; eta = formatCountdown(tsNum); readyAt = tsNum; }
         } catch { /* leave Unset */ }
+        setScanProgress((p) => p ? { ...p, done: p.done + 1 } : p);
         return {
           id: op.id, target: op.target, data: '', predecessor: op.predecessor, salt: op.salt,
           txHash: op.txHash, kind: 'starknet' as const,
           cairoSelector: op.cairoSelector, cairoCalldata: op.cairoCalldata,
-          state, eta,
+          state, eta, readyAt,
         };
       }));
       setScannedOps(results);
@@ -660,6 +692,7 @@ export function Timelock(): JSX.Element {
       setScanError(e instanceof Error ? e.message : String(e));
     } finally {
       setScanning(false);
+      setScanProgress(null);
     }
   }
 
@@ -932,7 +965,9 @@ export function Timelock(): JSX.Element {
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-on-surface-variant">State:</span>
                   <StateBadge state={opState} />
-                  {opEta && <span className="text-xs text-on-surface-variant">{opEta}</span>}
+                  {opReadyAt != null
+                    ? <LiveCountdown readyAt={opReadyAt} className="text-xs text-tertiary font-mono tabular-nums" />
+                    : opEta && <span className="text-xs text-on-surface-variant">{opEta}</span>}
                 </div>
                 {opState === 'Ready' && !wrongChain && (
                   <div className="flex flex-col gap-1">
@@ -1026,7 +1061,7 @@ export function Timelock(): JSX.Element {
         <Section icon="list_alt" title="Operations" subtitle={scannedOps.length > 0 ? `${scannedOps.length} found` : 'Scan to discover'}
           actions={
             <button className="btn btn-sm" onClick={handleScanClick} disabled={scanning || !timelockAddr}>
-              {scanning ? '…' : 'Scan'}
+              {scanning ? <Spinner size="sm" /> : 'Scan'}
             </button>
           }>
           <div className="mb-4">
@@ -1039,7 +1074,22 @@ export function Timelock(): JSX.Element {
           {!scanning && scannedOps.length === 0 && !scanError && (
             <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Press Scan to search.</div>
           )}
-          {scanning && <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Scanning…</div>}
+          {scanning && (
+            <div className="py-4">
+              <div className="text-xs text-on-surface-variant flex items-center justify-center gap-1.5">
+                <Spinner size="sm" />
+                {scanProgress
+                  ? <span>{scanProgress.label}{scanProgress.total > 0 ? ` ${scanProgress.done}/${scanProgress.total}` : '…'}</span>
+                  : <span>Scanning…</span>}
+              </div>
+              {scanProgress && scanProgress.total > 0 && (
+                <div className="mt-2 h-1 rounded-full bg-surface-container overflow-hidden">
+                  <div className="h-full bg-primary transition-all duration-200"
+                    style={{ width: `${Math.round((scanProgress.done / scanProgress.total) * 100)}%` }} />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Filter tabs */}
           {scannedOps.length > 0 && (
@@ -1064,7 +1114,8 @@ export function Timelock(): JSX.Element {
                 const order: Record<string, number> = { Waiting: 0, Ready: 1, Done: 2, Unset: 3 };
                 const diff = (order[a.state] ?? 9) - (order[b.state] ?? 9);
                 if (diff !== 0) return diff;
-                if (a.eta && b.eta) return a.eta.localeCompare(b.eta);
+                // Within Waiting, soonest-ready first (numeric, not string compare).
+                if (a.readyAt != null && b.readyAt != null) return a.readyAt - b.readyAt;
                 return 0;
               })
               .map((op) => {
@@ -1092,7 +1143,9 @@ export function Timelock(): JSX.Element {
                       size="sm"
                       truncate={{ start: 12, end: 6 }}
                     />
-                    {op.eta && <div className="text-[10px] text-tertiary mt-1">{op.eta}</div>}
+                    {op.readyAt != null
+                      ? <LiveCountdown readyAt={op.readyAt} className="block text-[10px] text-tertiary mt-1 font-mono tabular-nums" />
+                      : op.eta && <div className="text-[10px] text-tertiary mt-1">{op.eta}</div>}
                   </div>
 
                   {/* Decoded args preview */}
@@ -1114,7 +1167,7 @@ export function Timelock(): JSX.Element {
                     <StateBadge state={op.state} />
                     <div className="flex-1" />
                     <a href={explorerTx(op.txHash)} target="_blank" rel="noreferrer"
-                      className="btn btn-sm btn-ghost text-[10px]">↗ Explorer</a>
+                      className="btn btn-sm btn-ghost text-[10px]"><Icon name={ICONS.external} size={13} /> Explorer</a>
                     <button className="btn btn-sm"
                       onClick={() => {
                         setLookupHash(op.id);

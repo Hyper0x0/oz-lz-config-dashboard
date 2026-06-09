@@ -8,6 +8,8 @@ import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
 import { SwitchChainButton } from '@/components/ChainSwitch';
 import { AddressPill } from '@/components/AddressPill';
+import { Spinner } from '@/components/Spinner';
+import { Icon, ICONS } from '@/components/Icon';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
@@ -526,7 +528,7 @@ export function Roles(): JSX.Element {
       <Section icon="group" title="Role Holders" subtitle="On-chain role assignments"
         actions={
           <button className="btn btn-sm" onClick={handleScanClick} disabled={scanning || !contractAddr || !checked}>
-            {scanning ? 'Scanning…' : 'Scan'}
+            {scanning ? <><Spinner size="sm" /> Scanning…</> : 'Scan'}
           </button>
         }>
         {scanError && <div className="text-xs text-error mb-3">{scanError}</div>}
@@ -580,7 +582,7 @@ export function Roles(): JSX.Element {
               <div key={r.hash} className="flex items-center gap-2 bg-surface-container rounded px-2 py-1.5 border border-outline-variant/10 text-[11px]">
                 <span className="font-mono font-semibold text-on-surface">{r.label}</span>
                 <span className="flex-1" />
-                <button className="text-error text-[10px] hover:underline" onClick={() => removeCustomRole(r.hash)}>✕</button>
+                <button className="text-error hover:text-error/80 inline-flex items-center" onClick={() => removeCustomRole(r.hash)} title="Remove" aria-label="Remove role"><Icon name={ICONS.close} size={14} /></button>
               </div>
             ))}
           </div>

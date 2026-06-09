@@ -105,7 +105,7 @@ export interface CairoOFTState {
 export interface CairoOFTOps {
   readPeer: (cairoOftAddr: string, evmEid: number, rpc: string) => Promise<CairoOFTState>;
   /** Query get_peer for every entry in eidList in parallel. Returns PeerEntry[]. */
-  readAllPeers: (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string) => Promise<PeerEntry[]>;
+  readAllPeers: (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string, onProgress?: (done: number, total: number) => void) => Promise<PeerEntry[]>;
   /** Read enforced options from the Cairo OFT. Returns true if non-empty ByteArray is set. */
   /** Returns the enforced options as a hex string (LZ options format), or null if not set. */
   readEnforcedOptions: (cairoOftAddr: string, evmEid: number, rpc: string) => Promise<string | null>;
@@ -140,10 +140,14 @@ export function useCairoOFT(account: WalletAccount | null): CairoOFTOps {
     }
   }, []);
 
-  const readAllPeers = useCallback(async (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string): Promise<PeerEntry[]> => {
+  const readAllPeers = useCallback(async (cairoOftAddr: string, eidList: Array<{ eid: number; name: string }>, rpc: string, onProgress?: (done: number, total: number) => void): Promise<PeerEntry[]> => {
     // Bounded concurrency + retry — Stark RPCs throttle dozens of parallel callContract calls
     // and previously dropped random entries from the result.
-    const settled = await mapLimit(eidList, 4, (item) => withRetry(() => readCairoPeer(cairoOftAddr, item.eid, rpc)));
+    let done = 0;
+    const settled = await mapLimit(eidList, 4, async (item) => {
+      try { return await withRetry(() => readCairoPeer(cairoOftAddr, item.eid, rpc)); }
+      finally { onProgress?.(++done, eidList.length); }
+    });
     return eidList.map((item, i) => {
       const res = settled[i];
       if (res.status === 'rejected') return { ...item, peer: null, error: true };
