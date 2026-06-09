@@ -122,12 +122,16 @@ export function Roles(): JSX.Element {
   const filteredChains = EVM_CHAINS.filter((c) => c.isTestnet === isTestnet);
   const starkChain = resolveStarkChain(isTestnet);
 
-  // EVM chain selection
-  const [activeChainId, setActiveChainId] = useState<number>(421614);
+  // EVM chain selection — defaults to the connected wallet's chain so navigating between pages
+  // keeps you on it; an explicit in-page pick (this session) overrides until you change networks.
+  const [pickedChainId, setPickedChainId] = useState<number | null>(null);
+  const walletChainId = evm.isConnected && filteredChains.some((c) => c.id === evm.chainId) ? evm.chainId : null;
+  const activeChainId = pickedChainId ?? walletChainId ?? 421614;
+  const setActiveChainId = setPickedChainId;
   function handleNetworkToggle(testnet: boolean) {
     setIsTestnet(testnet);
     const first = EVM_CHAINS.find((c) => c.isTestnet === testnet);
-    if (first) setActiveChainId(first.id);
+    if (first) setPickedChainId(first.id);
   }
   const evmChain = filteredChains.find((c) => c.id === activeChainId) ?? filteredChains[0];
 

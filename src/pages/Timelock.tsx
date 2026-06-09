@@ -207,12 +207,17 @@ export function Timelock(): JSX.Element {
   const filteredChains = TIMELOCK_CHAINS.filter((c) => c.isTestnet === isTestnet);
   const starkChain = resolveStarkChain(isTestnet);
 
-  // EVM chain selection (persisted)
-  const [activeChainId, setActiveChainId] = useState<number>(() => {
+  // EVM chain selection — defaults to the connected wallet's chain so navigating between pages
+  // keeps you on it. An explicit in-page pick (this session) wins; the persisted localStorage
+  // value is only the no-wallet fallback for fresh loads.
+  const [persistedChainId] = useState<number>(() => {
     try { const s = localStorage.getItem('ozlz_timelock_chain'); return s ? Number(s) : 421614; } catch { return 421614; }
   });
+  const [pickedChainId, setPickedChainId] = useState<number | null>(null);
+  const walletChainId = evm.isConnected && filteredChains.some((c) => c.id === evm.chainId) ? evm.chainId : null;
+  const activeChainId = pickedChainId ?? walletChainId ?? persistedChainId;
   function selectChain(id: number) {
-    setActiveChainId(id);
+    setPickedChainId(id);
     try { localStorage.setItem('ozlz_timelock_chain', String(id)); } catch { /* */ }
   }
   // When toggling testnet/mainnet, reset to the first chain in the new list
