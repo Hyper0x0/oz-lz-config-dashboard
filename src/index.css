@@ -27,7 +27,18 @@
   --stark:        #919bff;
   --error:        #ff716c;
   --secondary:    #69f6b8;
+
+  /* Type system — INSTRUMENT: squared display, refined body, technical mono */
+  --font-display: 'Chakra Petch', 'Hanken Grotesk', sans-serif;
+  --font-sans:    'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono:    'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+
+  /* Atmosphere — blueprint grid + phosphor glow + grain layered on the substrate */
+  --grid-line:    rgba(120, 160, 220, 0.04);
+  --grid-size:    44px;
+  --glow-signal:  rgba(59, 191, 250, 0.10);
+  --hairline:     rgba(140, 170, 230, 0.08);
+
   --radius:       10px;
   --radius-sm:    8px;
   --radius-lg:    14px;
@@ -45,11 +56,39 @@ html, body {
   margin: 0; padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Console atmosphere: fixed blueprint grid + a phosphor glow bleeding from the
+   top. Sits behind everything (pointer-events:none, negative z) so the substrate
+   reads as a lit instrument panel rather than flat #0a0e1a. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 78% -10%, var(--glow-signal) 0%, transparent 55%),
+    radial-gradient(90% 60% at 0% 0%, rgba(145, 155, 255, 0.05) 0%, transparent 50%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, var(--grid-size) var(--grid-size), var(--grid-size) var(--grid-size);
+}
+
+/* Faint film grain over the grid so gradients don't band on OLED panels. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* ── Material Symbols ────────────────────────────────────────────────────── */
@@ -73,15 +112,15 @@ html, body {
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 .btn {
-  background: var(--bg-hover);
+  background: linear-gradient(180deg, var(--bg-hover), var(--bg-card-alt));
   border: 1px solid var(--border);
   color: var(--text);
   padding: 0 16px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   height: 36px;
   display: inline-flex;
   align-items: center;
@@ -90,9 +129,11 @@ html, body {
   white-space: nowrap;
   transition: all var(--transition);
   letter-spacing: 0.01em;
+  /* hairline top highlight — the look of a physical instrument key */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
-.btn:hover:not(:disabled)  { background: var(--bg-active); border-color: var(--border-hover); }
-.btn:active:not(:disabled) { transform: scale(0.98); }
+.btn:hover:not(:disabled)  { background: linear-gradient(180deg, var(--bg-active), var(--bg-hover)); border-color: var(--border-hover); }
+.btn:active:not(:disabled) { transform: translateY(0.5px) scale(0.99); box-shadow: inset 0 1px 3px rgba(0,0,0,0.3); }
 .btn:disabled              { opacity: 0.35; cursor: not-allowed; }
 .btn-sm  { padding: 0 12px; font-size: 12px; height: 30px; border-radius: 6px; }
 .btn-lg  { padding: 0 24px; font-size: 14px; height: 42px; font-weight: 600; border-radius: var(--radius); }
@@ -100,13 +141,14 @@ html, body {
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
   border-color: transparent;
-  color: #00374d;
-  font-weight: 600;
-  box-shadow: 0 0 20px var(--accent-glow), 0 2px 8px rgba(0,0,0,0.3);
+  color: #00222f;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 24px var(--accent-glow), 0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25);
 }
 .btn-primary:hover:not(:disabled) {
   background: linear-gradient(135deg, var(--accent-hover), #048ec0);
-  box-shadow: 0 0 30px rgba(59, 191, 250, 0.15), 0 2px 12px rgba(0,0,0,0.4);
+  box-shadow: 0 0 36px rgba(59, 191, 250, 0.28), 0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3);
 }
 
 .btn-danger { background: rgba(255, 113, 108, 0.08); border-color: rgba(255, 113, 108, 0.25); color: var(--error); }
@@ -126,17 +168,21 @@ html, body {
   color: var(--text);
   padding: 8px 14px;
   border-radius: var(--radius-sm);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
   width: 100%;
   outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
   height: 36px;
+  /* recessed field — light falls into the panel */
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 3px var(--accent-glow), inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
+/* Addresses, hashes & calldata read best in mono. */
+input.input, textarea.input { font-feature-settings: 'ss02', 'cv01'; }
 .input::placeholder { color: var(--text-dim); }
 select.input { cursor: pointer; }
 textarea.input { height: auto; min-height: 80px; resize: vertical; }
@@ -151,9 +197,9 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   font-size: 10px;
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.13em;
   color: var(--text-muted);
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 }
 
 /* ── Form layout ─────────────────────────────────────────────────────────── */
@@ -185,7 +231,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   display: flex; align-items: center; gap: 12px;
   width: 100%; background: none; border: none;
   color: var(--text); padding: 14px 18px;
-  cursor: pointer; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
+  cursor: pointer; font-family: var(--font-sans); font-size: 13px; font-weight: 500;
   transition: background var(--transition);
 }
 .step-header:hover { background: rgba(255,255,255,0.02); }
@@ -261,7 +307,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 /* ── Tab buttons ─────────────────────────────────────────────────────────── */
 .tab-btn {
   padding: 7px 16px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px; font-weight: 500;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -280,19 +326,31 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 
 /* ── Swap card (OFT bridge) ──────────────────────────────────────────────── */
 .swap-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.012), transparent 120px),
+    var(--bg-card);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.03);
   position: relative;
+  overflow: hidden;
+}
+/* signal rule along the top edge — matches .panel */
+.swap-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-glow) 18%, var(--accent-glow) 82%, transparent);
+  opacity: 0.7;
 }
 .swap-panel {
   padding: 20px;
-  background: var(--bg-card);
+  background: transparent;
   transition: background var(--transition);
   position: relative;
 }
-.swap-panel:hover { background: var(--bg-card-alt); }
+.swap-panel:hover { background: rgba(255,255,255,0.015); }
 .swap-panel-label {
   font-size: 13px;
   font-weight: 500;
@@ -308,7 +366,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   width: 100%;
   outline: none;
   padding: 0;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
 }
 .swap-amount-input::placeholder { color: var(--text-dim); }
 .swap-divider {
@@ -338,6 +396,76 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   font-size: 11px;
   color: var(--warn);
   line-height: 1.4;
+}
+
+/* ── Instrument panels (Section cards) ───────────────────────────────────── */
+/* A lit panel on the console: subtle vertical gradient, hairline frame, and a
+   thin signal rule along the top edge. */
+.panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.012), transparent 120px),
+    var(--bg-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.02);
+  overflow: hidden;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-glow) 18%, var(--accent-glow) 82%, transparent);
+  opacity: 0.7;
+}
+/* Monogram tile that frames a Section's icon. */
+.panel-glyph {
+  position: relative;
+  width: 38px; height: 38px;
+  border-radius: var(--radius);
+  background: radial-gradient(120% 120% at 30% 20%, var(--accent-glow), transparent 70%), var(--bg-input);
+  border: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+/* Recessed inner block inside a panel (op cards, info blocks, list rows). Reads
+   as a cut-out in the console face — darker, hairline-framed, inset shadow.
+   Pair with `rounded-*` / padding utilities at the call site. */
+.subpanel {
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ── Orchestrated entrance — staggered panel reveal on page load / route change */
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-enter > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.page-enter > *:nth-child(1) { animation-delay: 20ms; }
+.page-enter > *:nth-child(2) { animation-delay: 80ms; }
+.page-enter > *:nth-child(3) { animation-delay: 140ms; }
+.page-enter > *:nth-child(4) { animation-delay: 200ms; }
+.page-enter > *:nth-child(5) { animation-delay: 260ms; }
+.panel-stack > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.panel-stack > *:nth-child(1) { animation-delay: 40ms; }
+.panel-stack > *:nth-child(2) { animation-delay: 120ms; }
+.panel-stack > *:nth-child(3) { animation-delay: 200ms; }
+.panel-stack > *:nth-child(4) { animation-delay: 280ms; }
+.panel-stack > *:nth-child(5) { animation-delay: 360ms; }
+.panel-stack > *:nth-child(6) { animation-delay: 440ms; }
+
+/* Whole-page opacity fade on route change — opacity only, so it doesn't fight
+   the child panel-stack translate. */
+@keyframes routeIn { from { opacity: 0; } to { opacity: 1; } }
+.route-enter { animation: routeIn 280ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter > *, .panel-stack > *, .route-enter { animation: none; }
 }
 
 /* ── Loading skeletons ───────────────────────────────────────────────────── */
@@ -466,7 +594,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 .cmdk-search-icon { font-size: 18px; color: var(--text-muted); }
 .cmdk-input {
   flex: 1; background: none; border: none; outline: none;
-  color: var(--text); font-family: 'Inter', sans-serif;
+  color: var(--text); font-family: var(--font-sans);
   font-size: 15px; line-height: 1.4;
 }
 .cmdk-input::placeholder { color: var(--text-dim); }
@@ -500,7 +628,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   background: none; border: none; cursor: pointer;
   color: var(--text); text-align: left;
   border-radius: var(--radius-sm);
-  font-family: 'Inter', sans-serif; font-size: 13px;
+  font-family: var(--font-sans); font-size: 13px;
   transition: background 80ms ease-out;
 }
 .cmdk-item-active {

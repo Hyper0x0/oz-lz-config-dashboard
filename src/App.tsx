@@ -11,19 +11,22 @@ import { ToastContainer } from '@/components/ToastContainer';
 import { CommandPalette } from '@/components/CommandPalette';
 
 const navClass = ({ isActive }: { isActive: boolean }) => isActive
-  ? 'flex items-center gap-3 px-4 py-2.5 rounded-lg bg-primary/8 text-primary font-semibold border-l-2 border-primary transition-all'
-  : 'flex items-center gap-3 px-4 py-2.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all';
+  ? 'group relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-lg bg-primary/10 text-primary font-semibold tracking-wide border border-primary/20 shadow-[inset_0_0_18px_rgba(59,191,250,0.08)] transition-all before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-full before:bg-primary before:shadow-[0_0_8px_var(--accent)]'
+  : 'group relative flex items-center gap-3 pl-4 pr-3 py-2.5 rounded-lg text-on-surface-variant tracking-wide border border-transparent hover:bg-surface-container-high/60 hover:text-on-surface transition-all';
 
 function Sidebar(): JSX.Element {
   return (
-    <aside className="fixed left-0 top-0 flex flex-col h-screen w-72 flex-shrink-0 bg-surface border-r border-outline-variant/10 z-50">
+    <aside className="fixed left-0 top-0 flex flex-col h-screen w-72 flex-shrink-0 bg-surface-container-lowest/80 backdrop-blur-xl border-r border-[var(--hairline)] z-50">
       <div className="flex flex-col h-full py-6 px-4">
         {/* Brand */}
         <div className="mb-8 px-3">
-          <div className="text-lg font-bold tracking-tight text-on-surface font-headline">
-            <span className="text-primary">OZ</span><span className="text-on-surface-variant">LZ</span>
+          <div className="flex items-center gap-2 text-xl font-bold tracking-[0.04em] text-on-surface font-headline">
+            <span className="text-primary">OZ</span>
+            <span className="text-on-surface-variant/40 text-base font-normal">·</span>
+            <span className="text-on-surface-variant">LZ</span>
+            <span className="ml-1 w-1.5 h-1.5 rounded-full bg-secondary shadow-[0_0_6px_var(--secondary)] animate-pulse"></span>
           </div>
-          <div className="text-[11px] text-on-surface-variant mt-0.5 font-body">Configurator Dashboard</div>
+          <div className="text-[10px] text-on-surface-variant/70 mt-1 font-mono uppercase tracking-[0.22em]">Operator Console</div>
         </div>
 
         {/* Navigation */}
@@ -145,8 +148,9 @@ function PaletteTrigger(): JSX.Element {
 
 function TopBar(): JSX.Element {
   return (
-    <header className="fixed top-0 right-0 left-72 h-16 flex items-center justify-between px-8 z-40 bg-surface/70 backdrop-blur-2xl border-b border-outline-variant/10">
-      <h1 className="font-headline text-sm font-semibold tracking-tight">
+    <header className="fixed top-0 right-0 left-72 h-16 flex items-center justify-between px-8 z-40 bg-surface-container-lowest/60 backdrop-blur-2xl border-b border-[var(--hairline)]">
+      <h1 className="font-headline text-sm font-semibold tracking-tight flex items-center gap-3">
+        <span className="material-symbols-outlined text-primary text-base">terminal</span>
         <PageTitle />
       </h1>
       <div className="flex items-center gap-3">
@@ -158,13 +162,14 @@ function TopBar(): JSX.Element {
 }
 
 function AppShell(): JSX.Element {
+  const loc = useLocation();
   return (
-    <div className="bg-surface text-on-surface font-body min-h-screen">
+    <div className="text-on-surface font-body min-h-screen">
       <Sidebar />
       <TopBar />
       <main className="ml-72 mt-16 pb-8 min-h-screen">
-        <div className="p-8">
-          <Routes>
+        <div key={loc.pathname} className="route-enter p-8">
+          <Routes location={loc}>
             <Route path="/"         element={<Timelock />} />
             <Route path="/roles"    element={<Roles />} />
             <Route path="/wiring"   element={<OFTWiring />} />

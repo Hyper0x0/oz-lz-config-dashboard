@@ -456,7 +456,7 @@ export function Settings(): JSX.Element {
               const chain = allChains.find((c) => c.chainId === row.chainId);
               const testKey = `evm:${row.chainId}`;
               return (
-                <div key={row.chainId} className="bg-surface-container/50 border border-outline-variant/20 rounded-lg p-3">
+                <div key={row.chainId} className="subpanel rounded-lg p-3">
                   <div className="flex gap-2 items-start mb-2">
                     <select
                       className="input flex-shrink-0"

@@ -549,7 +549,7 @@ export function Roles(): JSX.Element {
                 <div className="label mb-1">{roleLabel} ({rh.length})</div>
                 <div className="space-y-1">
                   {rh.map((h) => (
-                    <div key={h.account} className="flex items-center gap-2 bg-surface-container rounded px-3 py-2 border border-outline-variant/10">
+                    <div key={h.account} className="flex items-center gap-2 subpanel rounded px-3 py-2">
                       <span className="text-xs text-secondary font-bold">✓</span>
                       <div className="flex-1 min-w-0">
                         <AddressPill
@@ -583,7 +583,7 @@ export function Roles(): JSX.Element {
         {customRoles.length > 0 && (
           <div className="space-y-1">
             {customRoles.map((r) => (
-              <div key={r.hash} className="flex items-center gap-2 bg-surface-container rounded px-2 py-1.5 border border-outline-variant/10 text-[11px]">
+              <div key={r.hash} className="flex items-center gap-2 subpanel rounded px-2 py-1.5 text-[11px]">
                 <span className="font-mono font-semibold text-on-surface">{r.label}</span>
                 <span className="flex-1" />
                 <button className="text-error hover:text-error/80 inline-flex items-center" onClick={() => removeCustomRole(r.hash)} title="Remove" aria-label="Remove role"><Icon name={ICONS.close} size={14} /></button>

@@ -60,9 +60,10 @@ export default {
         'warn-container':           'rgba(255, 217, 61, 0.08)',
       },
       fontFamily: {
-        headline: ['"Space Grotesk"', 'sans-serif'],
-        body:     ['"Inter"', 'sans-serif'],
-        label:    ['"Space Grotesk"', 'sans-serif'],
+        headline: ['"Chakra Petch"', 'sans-serif'],
+        body:     ['"Hanken Grotesk"', 'sans-serif'],
+        label:    ['"JetBrains Mono"', 'monospace'],
+        mono:     ['"JetBrains Mono"', 'monospace'],
       },
       borderRadius: {
         DEFAULT: '8px',

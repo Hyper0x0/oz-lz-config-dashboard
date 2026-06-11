@@ -790,7 +790,7 @@ export function Timelock(): JSX.Element {
         <Section icon="add_circle" title="Schedule Operation" subtitle="Encode and schedule a timelock operation">
 
           {uiFunctions.length === 0 ? (
-            <div className="text-xs text-on-surface-variant bg-surface-container rounded-lg p-4 border border-outline-variant/10">
+            <div className="text-xs text-on-surface-variant subpanel rounded-lg p-4">
               {chainType === 'starknet'
                 ? <>No write functions found in <span className="font-mono">src/config/timelockTargetStarknet.json</span>. Populate the <span className="font-mono">abi</span> field with your Cairo contract's ABI.</>
                 : <>No write functions found in <span className="font-mono">src/config/timelockTarget.json</span>. Replace the ABI with your contract's ABI.</>}
@@ -1042,7 +1042,7 @@ export function Timelock(): JSX.Element {
                 return (
                   <div className="text-[11px] leading-relaxed">
                     {decoded && (
-                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2">
+                      <div className="subpanel rounded-lg p-3 mb-2">
                         <div className="label mb-1">Decoded</div>
                         <div className="text-primary font-semibold font-mono">{decoded.fn}()</div>
                         <div className="text-[10px] text-on-surface-variant mb-1">{decoded.contract}</div>
@@ -1067,7 +1067,7 @@ export function Timelock(): JSX.Element {
                 return (
                   <div className="text-[11px] leading-relaxed">
                     {decoded ? (
-                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2">
+                      <div className="subpanel rounded-lg p-3 mb-2">
                         <div className="label mb-1">Decoded</div>
                         <div className="text-primary font-semibold font-mono">{decoded.fn}()</div>
                         <div className="text-[10px] text-on-surface-variant mb-1">{decoded.contract}</div>
@@ -1078,7 +1078,7 @@ export function Timelock(): JSX.Element {
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-surface-container rounded-lg p-3 border border-outline-variant/10 mb-2 text-on-surface-variant">
+                      <div className="subpanel rounded-lg p-3 mb-2 text-on-surface-variant">
                         Unknown selector — not matched against loaded Cairo ABIs.
                       </div>
                     )}
@@ -1171,7 +1171,7 @@ export function Timelock(): JSX.Element {
                 ? (op.cairoSelector ? `${op.cairoSelector.slice(0, 10)}…` : 'unknown')
                 : op.data.slice(0, 10);
               return (
-                <div key={op.id} className="bg-surface-container rounded-lg border border-outline-variant/10 overflow-hidden">
+                <div key={op.id} className="subpanel rounded-lg overflow-hidden">
                   {/* Header: decoded function name or raw hash */}
                   <div className="px-3 pt-3 pb-2">
                     {decoded ? (
@@ -1331,7 +1331,7 @@ function RoleManagement({ timelockAddr, ops, evm, wrongChain, chainName, switchN
           </div>
 
           {walletRoles.ADMIN && (
-            <div className="bg-surface-container rounded-lg p-4 border border-outline-variant/10">
+            <div className="subpanel rounded-lg p-4">
               <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">
                 {revokeMode ? 'Revoke' : 'Grant'} role
               </div>

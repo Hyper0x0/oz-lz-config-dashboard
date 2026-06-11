@@ -1046,7 +1046,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
           </div>
 
           {/* Adapter address */}
-          <div className="mb-3 p-2 bg-surface-container rounded-lg border border-outline-variant/10">
+          <div className="mb-3 p-2 subpanel rounded-lg">
             <div className="text-[10px] text-on-surface-variant mb-0.5">{bridgeLabel}</div>
             <div className="font-mono text-[11px] text-on-surface break-all">{bridgeAddr}</div>
           </div>
