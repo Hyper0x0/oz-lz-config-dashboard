@@ -180,15 +180,18 @@ export function OFTs(): JSX.Element {
   const remoteLabel = detectedRemote === 'adapter' ? 'Adapter' : detectedRemote === 'oft' ? 'OFT' : 'OFT';
 
   return (
-    <div className="max-w-xl mx-auto space-y-5">
+    <div className="min-h-[calc(100vh-9rem)] flex items-center justify-center">
+      <div className="w-full max-w-xl mx-auto space-y-5 reveal">
 
       {/* Network + Type bar */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex gap-2 items-center">
-          <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
-            onClick={() => handleNetworkToggle(true)}>Testnet</button>
-          <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
-            onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+          <div className="segmented">
+            <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(true)}>Testnet</button>
+            <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+          </div>
           {chainsLoading && <span className="text-xs text-on-surface-variant animate-pulse">Loading...</span>}
         </div>
 
@@ -284,6 +287,7 @@ export function OFTs(): JSX.Element {
           walletBalance={walletBalance}
           tokenSymbol={tokenSymbol}
         />
+      </div>
       </div>
     </div>
   );

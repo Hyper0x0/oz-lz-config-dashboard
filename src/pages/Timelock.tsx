@@ -737,17 +737,19 @@ export function Timelock(): JSX.Element {
         <Section icon="schedule" title="TimelockController" subtitle="Contract address and configuration">
           {/* Chain type toggle + network mode */}
           <div className="flex gap-2 items-center mb-4 flex-wrap">
-            <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
-              onClick={() => { setChainType('evm'); setMinDelay(''); }}>EVM</button>
-            <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
-              onClick={() => { setChainType('starknet'); setMinDelay(''); }}>Starknet</button>
+            <div className="segmented">
+              <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
+                onClick={() => { setChainType('evm'); setMinDelay(''); }}>EVM</button>
+              <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
+                onClick={() => { setChainType('starknet'); setMinDelay(''); }}>Starknet</button>
+            </div>
 
-            <span className="w-px h-5 bg-outline-variant/20 mx-1" />
-
-            <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
-              onClick={() => handleNetworkToggle(true)}>Testnet</button>
-            <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
-              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+            <div className="segmented">
+              <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+                onClick={() => handleNetworkToggle(true)}>Testnet</button>
+              <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+                onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+            </div>
 
             {/* Chain selector */}
             {chainType === 'evm' && (
@@ -1116,9 +1118,13 @@ export function Timelock(): JSX.Element {
               value={scanFromBlock} onChange={(e) => setScanFromBlock(e.target.value)} />
           </div>
 
+          <div className="min-h-[200px]">
           {scanError && <div className="text-[11px] text-error mb-3">{scanError}</div>}
           {!scanning && scannedOps.length === 0 && !scanError && (
-            <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Press Scan to search.</div>
+            <div className="min-h-[180px] flex flex-col items-center justify-center gap-2 text-xs text-on-surface-variant text-center">
+              <Icon name="list_alt" size={22} className="opacity-40" />
+              <span>Press <strong>Scan</strong> to search.</span>
+            </div>
           )}
           {scanning && (
             <div className="py-4">
@@ -1228,6 +1234,7 @@ export function Timelock(): JSX.Element {
                 </div>
               );
             })}
+          </div>
           </div>
         </Section>
         </div>

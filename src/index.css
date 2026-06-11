@@ -4,6 +4,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+html { scroll-behavior: smooth; }
+
 /* ── Design tokens ───────────────────────────────────────────────────────── */
 :root {
   --bg:           #0a0e1a;
@@ -304,6 +306,31 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 .check-warn .check-icon     { color: var(--warn); }
 .check-info .check-icon     { color: var(--text-muted); }
 
+/* ── Segmented control ───────────────────────────────────────────────────── */
+/* Groups 2-3 mutually-exclusive toggles into ONE recessed control so a page
+   reads as fewer controls instead of a row of loose buttons. */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.segmented .tab-btn {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border-color: transparent;
+}
+.segmented .tab-btn:hover { background: rgba(255, 255, 255, 0.03); }
+.segmented .tab-btn-active {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: rgba(59, 191, 250, 0.25);
+}
+
 /* ── Tab buttons ─────────────────────────────────────────────────────────── */
 .tab-btn {
   padding: 7px 16px;
@@ -467,8 +494,21 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 @keyframes routeIn { from { opacity: 0; } to { opacity: 1; } }
 .route-enter { animation: routeIn 280ms ease-out both; }
 
+/* Reveal — for content that APPEARS dynamically (verify tables, scan results,
+   detected badges, fetched info). Fades + lifts into place so nothing pops in. */
+.reveal { animation: panelIn 380ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+/* Staggered children — e.g. a list of check rows revealing one after another. */
+.reveal-list > * { animation: panelIn 360ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.reveal-list > *:nth-child(1) { animation-delay: 30ms; }
+.reveal-list > *:nth-child(2) { animation-delay: 70ms; }
+.reveal-list > *:nth-child(3) { animation-delay: 110ms; }
+.reveal-list > *:nth-child(4) { animation-delay: 150ms; }
+.reveal-list > *:nth-child(5) { animation-delay: 190ms; }
+.reveal-list > *:nth-child(n+6) { animation-delay: 230ms; }
+
 @media (prefers-reduced-motion: reduce) {
-  .page-enter > *, .panel-stack > *, .route-enter { animation: none; }
+  .page-enter > *, .panel-stack > *, .route-enter,
+  .reveal, .reveal-list > * { animation: none; }
 }
 
 /* ── Loading skeletons ───────────────────────────────────────────────────── */

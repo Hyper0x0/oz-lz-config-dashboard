@@ -535,15 +535,22 @@ export function Roles(): JSX.Element {
             {scanning ? <><Spinner size="sm" /> Scanning…</> : 'Scan'}
           </button>
         }>
+        <div className="min-h-[200px]">
         {scanError && <div className="text-xs text-error mb-3">{scanError}</div>}
         {!checked && (
-          <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Check a contract first</div>
+          <div className="min-h-[180px] flex flex-col items-center justify-center gap-2 text-xs text-on-surface-variant text-center">
+            <Icon name="group" size={22} className="opacity-40" />
+            <span>Check a contract first</span>
+          </div>
         )}
         {checked && holders.length === 0 && !scanning && (
-          <div className="text-xs text-on-surface-variant opacity-60 text-center py-4">Press Scan to find holders</div>
+          <div className="min-h-[180px] flex items-center justify-center text-xs text-on-surface-variant text-center">Press Scan to find holders</div>
+        )}
+        {scanning && (
+          <div className="min-h-[180px] flex items-center justify-center"><Spinner size="md" /></div>
         )}
         {holdersByRole.size > 0 && (
-          <div className="space-y-4">
+          <div className="space-y-4 reveal">
             {[...holdersByRole.entries()].map(([roleLabel, rh]) => (
               <div key={roleLabel}>
                 <div className="label mb-1">{roleLabel} ({rh.length})</div>
@@ -567,6 +574,7 @@ export function Roles(): JSX.Element {
             ))}
           </div>
         )}
+        </div>
       </Section>
 
       {/* Custom Roles — sidebar */}
@@ -604,17 +612,19 @@ export function Roles(): JSX.Element {
       <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract">
         {/* Chain type toggle + network mode */}
         <div className="flex gap-2 items-center mb-4 flex-wrap">
-          <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
-            onClick={() => setChainType('evm')}>EVM</button>
-          <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
-            onClick={() => setChainType('starknet')}>Starknet</button>
+          <div className="segmented">
+            <button className={`tab-btn ${chainType === 'evm' ? 'tab-btn-active' : ''}`}
+              onClick={() => setChainType('evm')}>EVM</button>
+            <button className={`tab-btn ${chainType === 'starknet' ? 'tab-btn-active' : ''}`}
+              onClick={() => setChainType('starknet')}>Starknet</button>
+          </div>
 
-          <span className="w-px h-5 bg-outline-variant/20 mx-1" />
-
-          <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
-            onClick={() => handleNetworkToggle(true)}>Testnet</button>
-          <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
-            onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+          <div className="segmented">
+            <button className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(true)}>Testnet</button>
+            <button className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+          </div>
 
           {chainType === 'evm' && (
             <div className="ml-auto flex items-center gap-2">

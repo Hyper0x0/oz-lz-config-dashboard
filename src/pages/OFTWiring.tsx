@@ -15,6 +15,7 @@ import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
 import { WalletChainHint } from '@/components/ChainSwitch';
 import { Spinner } from '@/components/Spinner';
+import { Icon } from '@/components/Icon';
 import { SkeletonRows } from '@/components/Skeleton';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
@@ -338,12 +339,14 @@ export function OFTWiring(): JSX.Element {
 
           {/* Network toggle + wiring mode */}
           <div className="flex gap-2 items-center mb-5 flex-wrap">
-            <button
-              className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
-              onClick={() => handleNetworkToggle(true)}>Testnet</button>
-            <button
-              className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
-              onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+            <div className="segmented">
+              <button
+                className={`tab-btn ${isTestnet ? 'tab-btn-active' : ''}`}
+                onClick={() => handleNetworkToggle(true)}>Testnet</button>
+              <button
+                className={`tab-btn ${!isTestnet ? 'tab-btn-active' : ''}`}
+                onClick={() => handleNetworkToggle(false)}>Mainnet</button>
+            </div>
             {chainsLoading && <span className="text-xs text-on-surface-variant">Loading chains…</span>}
             {!chainsLoading && <span className="text-xs text-on-surface-variant">{evmChains.length} EVM + 1 Starknet</span>}
             <div className="ml-auto flex gap-2 items-center">
@@ -443,7 +446,7 @@ export function OFTWiring(): JSX.Element {
 
           {/* Token banner */}
           {tokenInfo && (
-            <div className="token-banner">
+            <div className="token-banner reveal">
               <TokenBadge label={`Home (${home.name})`} name={tokenInfo.tokenName} symbol={tokenInfo.tokenSymbol} />
               <span className="text-on-surface-variant text-lg">↔</span>
               <TokenBadge label={`Remote (${remote.name})`} name={tokenInfo.peerName} symbol={tokenInfo.peerSymbol} />
@@ -1011,9 +1014,11 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
         </button>
       }>
 
+      <div className="min-h-[220px]">
       {!peers && !scanning && !error && (
-        <div className="text-xs text-on-surface-variant text-center py-5">
-          Enter a contract address above and press <strong>Scan</strong> to discover all connected chains.
+        <div className="min-h-[200px] flex flex-col items-center justify-center gap-2 text-xs text-on-surface-variant text-center px-2">
+          <Icon name="hub" size={22} className="opacity-40" />
+          <span>Enter a contract address above and press <strong>Scan</strong> to discover all connected chains.</span>
         </div>
       )}
 
@@ -1038,7 +1043,7 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
       )}
 
       {peers && !scanning && (
-        <>
+        <div className="reveal">
           {/* Summary */}
           <div className="flex gap-2 mb-3 text-xs">
             <span className="text-secondary font-semibold">{connected.length} connected</span>
@@ -1073,8 +1078,9 @@ function PeersSidebar({ peers, scanning, error, canScan, bridgeAddr, bridgeLabel
               ))}
             </>
           )}
-        </>
+        </div>
       )}
+      </div>
     </Section>
   );
 }
@@ -1205,10 +1211,16 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
         </div>
       }>
 
+      {/* Fixed content slot — keeps the panel a constant height across
+          empty / loading / result states so the layout never jumps. */}
+      <div className="min-h-[260px]">
       {!result && !verifying && (
-        <p className="text-xs text-on-surface-variant">
-          Checks run automatically when addresses are entered. Press <strong>Re-run checks</strong> to refresh.
-        </p>
+        <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center gap-2 text-on-surface-variant">
+          <Icon name="fact_check" size={24} className="opacity-40" />
+          <p className="text-xs max-w-xs">
+            Checks run automatically when addresses are entered. Press <strong>Re-run checks</strong> to refresh.
+          </p>
+        </div>
       )}
 
       {!result && verifying && (
@@ -1223,7 +1235,7 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
       )}
 
       {result && !result.error && (
-        <>
+        <div className="reveal">
           <div className="label mt-2">A → B ({homeChain.name} → {remoteChain.name})</div>
           <div className="verify-summary">
             <SummaryItem label="Send lib" value={result.homeSendLib ?? '—'} />
@@ -1317,8 +1329,9 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
               </RawSection>
             </div>
           </details>
-        </>
+        </div>
       )}
+      </div>
     </Section>
   );
 }
