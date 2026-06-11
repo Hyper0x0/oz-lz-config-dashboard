@@ -360,7 +360,7 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,255,255,0.03);
   position: relative;
-  overflow: hidden;
+  /* no overflow:hidden — would clip the chain dropdowns inside the swap panels */
 }
 /* signal rule along the top edge — matches .panel */
 .swap-card::before {
@@ -439,7 +439,8 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.02);
-  overflow: hidden;
+  /* NB: no overflow:hidden — it would clip dropdowns/popovers that open past
+     the panel edge. The ::before signal rule fades at its ends, so corners are fine. */
 }
 .panel::before {
   content: '';
@@ -475,13 +476,13 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.page-enter > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.page-enter > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) backwards; }
 .page-enter > *:nth-child(1) { animation-delay: 20ms; }
 .page-enter > *:nth-child(2) { animation-delay: 80ms; }
 .page-enter > *:nth-child(3) { animation-delay: 140ms; }
 .page-enter > *:nth-child(4) { animation-delay: 200ms; }
 .page-enter > *:nth-child(5) { animation-delay: 260ms; }
-.panel-stack > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.panel-stack > * { animation: panelIn 460ms cubic-bezier(0.22, 0.8, 0.28, 1) backwards; }
 .panel-stack > *:nth-child(1) { animation-delay: 40ms; }
 .panel-stack > *:nth-child(2) { animation-delay: 120ms; }
 .panel-stack > *:nth-child(3) { animation-delay: 200ms; }
@@ -496,9 +497,9 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
 
 /* Reveal — for content that APPEARS dynamically (verify tables, scan results,
    detected badges, fetched info). Fades + lifts into place so nothing pops in. */
-.reveal { animation: panelIn 380ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.reveal { animation: panelIn 380ms cubic-bezier(0.22, 0.8, 0.28, 1) backwards; }
 /* Staggered children — e.g. a list of check rows revealing one after another. */
-.reveal-list > * { animation: panelIn 360ms cubic-bezier(0.22, 0.8, 0.28, 1) both; }
+.reveal-list > * { animation: panelIn 360ms cubic-bezier(0.22, 0.8, 0.28, 1) backwards; }
 .reveal-list > *:nth-child(1) { animation-delay: 30ms; }
 .reveal-list > *:nth-child(2) { animation-delay: 70ms; }
 .reveal-list > *:nth-child(3) { animation-delay: 110ms; }

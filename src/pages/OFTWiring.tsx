@@ -661,7 +661,7 @@ function AnyChainSelect({ evmChains, isTestnet, selected, onSelect, disabledEid 
             <input ref={inputRef} className="input" placeholder="Search chain or EID…"
               value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
-          <div className="overflow-y-auto max-h-[260px]">
+          <div className="overflow-y-auto max-h-[200px]">
             {filteredEvm.length === 0 && (
               <div className="px-3 py-2.5 text-on-surface-variant text-[13px]">No chains match</div>
             )}
