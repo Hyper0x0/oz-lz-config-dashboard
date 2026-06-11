@@ -10,6 +10,7 @@ import { SwitchChainButton } from '@/components/ChainSwitch';
 import { AddressPill } from '@/components/AddressPill';
 import { Spinner } from '@/components/Spinner';
 import { Icon, ICONS } from '@/components/Icon';
+import { Badge } from '@/components/Badge';
 import AccessControlABI from '@/abis/evm/AccessControl.json';
 import StarkAccessControlABI from '@/abis/svm/AccessControl.json';
 import { STARKNET_TESTNET, STARKNET_MAINNET, ARBISCAN_API_KEY } from '@/config/chains';
@@ -516,6 +517,7 @@ export function Roles(): JSX.Element {
 
   const walletAddr = chainType === 'starknet' ? stark.address : evm.address;
   const isAdmin = myRoles.get(ZERO_HASH) === true;
+  const myRoleCount = presetRoles.filter((r) => myRoles.get(r.hash) === true).length;
   const wrongChain = chainType === 'evm' && evm.isConnected && evm.chainId !== evmChain.id;
   const explorer = chainType === 'starknet' ? starkChain.explorer : evmChain.explorer;
 
@@ -557,7 +559,7 @@ export function Roles(): JSX.Element {
                 <div className="space-y-1">
                   {rh.map((h) => (
                     <div key={h.account} className="flex items-center gap-2 subpanel rounded px-3 py-2">
-                      <span className="text-xs text-secondary font-bold">✓</span>
+                      <Icon name={ICONS.success} size={14} className="text-secondary" />
                       <div className="flex-1 min-w-0">
                         <AddressPill
                           address={h.account}
@@ -609,7 +611,12 @@ export function Roles(): JSX.Element {
   const mainContent = (
     <>
       {/* Contract setup */}
-      <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract">
+      <Section icon="security" title="AccessControl" subtitle="Manage roles on any OpenZeppelin AccessControl contract"
+        actions={checked && walletAddr ? (
+          isAdmin
+            ? <Badge variant="stark" icon="badge">You · ADMIN</Badge>
+            : <Badge variant={myRoleCount > 0 ? 'success' : 'neutral'} icon="badge">You · {myRoleCount > 0 ? `${myRoleCount} role${myRoleCount > 1 ? 's' : ''}` : 'no roles'}</Badge>
+        ) : undefined}>
         {/* Chain type toggle + network mode */}
         <div className="flex gap-2 items-center mb-4 flex-wrap">
           <div className="segmented">
@@ -693,7 +700,7 @@ export function Roles(): JSX.Element {
               const has = myRoles.get(role.hash) === true;
               return (
                 <div key={role.hash} className={`flex items-center gap-3 p-3 rounded-lg border text-xs ${has ? 'bg-secondary/10 text-secondary border-secondary/20' : 'bg-surface-container border-outline-variant/10 text-on-surface-variant/40'}`}>
-                  <span className="font-bold">{has ? '✓' : '✗'}</span>
+                  <Icon name={has ? ICONS.success : ICONS.error} size={15} />
                   <span className="font-mono text-[11px] flex-1">{role.label}</span>
                   {has && !wrongChain && (
                     <button className="btn btn-sm btn-danger" onClick={() => handleRenounce(role)}

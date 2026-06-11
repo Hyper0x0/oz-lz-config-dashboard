@@ -230,6 +230,9 @@ export function Timelock(): JSX.Element {
   const wrongChain = evm.isConnected && evm.chainId !== selectedChain.id;
 
   const [timelockAddr, setTimelockAddr] = useState(CONTRACTS.adminGateway ?? '');
+  const [recentTimelocks, setRecentTimelocks] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem('ozlz_recent_timelocks') ?? '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
   const [minDelay,     setMinDelay]     = useState<string>('');
   const [minDelayError, setMinDelayError] = useState<string | null>(null);
 
@@ -313,6 +316,7 @@ export function Timelock(): JSX.Element {
   const [delay,       setDelay]       = useState('172800');
   const [salt,        setSalt]        = useState(randomSalt());
   const [predecessor, setPredecessor] = useState('0x0000000000000000000000000000000000000000000000000000000000000000');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // ── EVM: remember last-good calldata for execute after the form clears ────
   const [lastCalldata, setLastCalldata] = useState<string | null>(null);
@@ -394,6 +398,16 @@ export function Timelock(): JSX.Element {
   const [opFilter, setOpFilter] = useState<'all' | 'Waiting' | 'Ready' | 'Done'>('all');
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+  function rememberTimelock(addr: string): void {
+    const a = addr.trim();
+    if (!a) return;
+    setRecentTimelocks((prev) => {
+      const next = [a, ...prev.filter((x) => x.toLowerCase() !== a.toLowerCase())].slice(0, 8);
+      try { localStorage.setItem('ozlz_recent_timelocks', JSON.stringify(next)); } catch { /* */ }
+      return next;
+    });
+  }
+
   async function loadMinDelay(): Promise<void> {
     if (!timelockAddr) return;
     setMinDelayError(null);
@@ -403,6 +417,7 @@ export function Timelock(): JSX.Element {
         : await ops.getMinDelay(timelockAddr, evm.provider ?? undefined);
       setMinDelay(formatDelay(Number(d)));
       setDelay(String(d));
+      rememberTimelock(timelockAddr);
     } catch (e) {
       setMinDelay('');
       setMinDelayError(e instanceof Error ? e.message : String(e));
@@ -774,7 +789,11 @@ export function Timelock(): JSX.Element {
           <div className="flex gap-3 items-end">
             <div className="flex-1">
               <div className="label">TimelockController address</div>
-              <input className="input" value={timelockAddr} onChange={(e) => setTimelockAddr(e.target.value)} placeholder="0x…" spellCheck={false} />
+              <input className="input" value={timelockAddr} onChange={(e) => setTimelockAddr(e.target.value)} placeholder="0x…" spellCheck={false}
+                list="recent-timelocks" />
+              <datalist id="recent-timelocks">
+                {recentTimelocks.map((a) => <option key={a} value={a} />)}
+              </datalist>
             </div>
             <button className="btn" onClick={loadMinDelay}>Load Min Delay</button>
           </div>
@@ -875,41 +894,53 @@ export function Timelock(): JSX.Element {
             </>
           )}
 
-          <div className="flex gap-3 mt-4 flex-wrap">
+          <div className="flex gap-3 mt-4 items-end flex-wrap">
             <div className="w-44 flex-shrink-0">
               <div className="label">Delay (seconds)</div>
               <input className="input" value={delay} onChange={(e) => setDelay(e.target.value)} />
             </div>
-            <div className="flex-1 min-w-[220px]">
-              <div className="label">Salt</div>
-              <div className="flex gap-2">
-                <input
-                  className={`input flex-1 ${saltInvalidForStarknet ? 'border-warn' : ''}`}
-                  value={salt}
-                  onChange={(e) => setSalt(e.target.value)}
-                />
-                <button className="btn" onClick={() => setSalt(randomSalt())}>Rand</button>
-              </div>
-              {saltInvalidForStarknet && (
-                <div className="text-[11px] text-warn mt-1 leading-snug">
-                  Out of felt252 range. Starknet requires salt &lt; 2<sup>252</sup>. Click <b>Rand</b> to regenerate.
-                </div>
-              )}
-            </div>
-            <div className="basis-full">
-              <div className="label">Predecessor</div>
-              <input
-                className={`input ${predecessorInvalidForStarknet ? 'border-warn' : ''}`}
-                value={predecessor}
-                onChange={(e) => setPredecessor(e.target.value)}
-              />
-              {predecessorInvalidForStarknet && (
-                <div className="text-[11px] text-warn mt-1 leading-snug">
-                  Out of felt252 range. Use 0x0 if there's no predecessor.
-                </div>
-              )}
-            </div>
+            <button type="button" className="btn btn-sm btn-ghost ml-auto"
+              onClick={() => setShowAdvanced((v) => !v)}>
+              <Icon name={showAdvanced ? 'expand_less' : 'expand_more'} size={16} />
+              Advanced
+            </button>
           </div>
+
+          {/* Advanced — salt & predecessor (auto-revealed when a value is out of
+              felt252 range so the validation warning is never hidden). */}
+          {(showAdvanced || saltInvalidForStarknet || predecessorInvalidForStarknet) && (
+            <div className="mt-3 space-y-3 reveal">
+              <div>
+                <div className="label">Salt</div>
+                <div className="flex gap-2">
+                  <input
+                    className={`input flex-1 ${saltInvalidForStarknet ? 'border-warn' : ''}`}
+                    value={salt}
+                    onChange={(e) => setSalt(e.target.value)}
+                  />
+                  <button className="btn" onClick={() => setSalt(randomSalt())}>Rand</button>
+                </div>
+                {saltInvalidForStarknet && (
+                  <div className="text-[11px] text-warn mt-1 leading-snug">
+                    Out of felt252 range. Starknet requires salt &lt; 2<sup>252</sup>. Click <b>Rand</b> to regenerate.
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="label">Predecessor</div>
+                <input
+                  className={`input ${predecessorInvalidForStarknet ? 'border-warn' : ''}`}
+                  value={predecessor}
+                  onChange={(e) => setPredecessor(e.target.value)}
+                />
+                {predecessorInvalidForStarknet && (
+                  <div className="text-[11px] text-warn mt-1 leading-snug">
+                    Out of felt252 range. Use 0x0 if there's no predecessor.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="mt-4">
             {calldataError && (
@@ -1326,7 +1357,7 @@ function RoleManagement({ timelockAddr, ops, evm, wrongChain, chainName, switchN
           <div className="flex gap-2 flex-wrap mb-4">
             {ROLE_NAMES.map((role) => (
               <span key={role} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold border ${walletRoles[role] ? ROLE_COLORS[role] : 'bg-surface-container text-on-surface-variant/40 border-outline-variant/10'}`}>
-                {walletRoles[role] ? '✓' : '✗'} {role}
+                <Icon name={walletRoles[role] ? ICONS.success : ICONS.error} size={13} /> {role}
               </span>
             ))}
           </div>

@@ -186,7 +186,21 @@ body::after {
 /* Addresses, hashes & calldata read best in mono. */
 input.input, textarea.input { font-feature-settings: 'ss02', 'cv01'; }
 .input::placeholder { color: var(--text-dim); }
-select.input { cursor: pointer; }
+/* Native selects — strip the OS arrow and draw one consistent chevron so every
+   dropdown across the app reads the same. */
+select.input {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238891ab' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+select.input:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%233bbffa' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
 textarea.input { height: auto; min-height: 80px; resize: vertical; }
 
 /* ── Labels ──────────────────────────────────────────────────────────────── */

@@ -15,7 +15,7 @@ import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
 import { WalletChainHint } from '@/components/ChainSwitch';
 import { Spinner } from '@/components/Spinner';
-import { Icon } from '@/components/Icon';
+import { Icon, ICONS } from '@/components/Icon';
 import { SkeletonRows } from '@/components/Skeleton';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
@@ -1261,7 +1261,7 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
           {/* Failed checks always shown */}
           {[...criticalFailed, ...warnFailed].map((c, i) => (
             <div key={i} className={`check-row ${c.severity === 'critical' ? 'check-critical' : 'check-warn'}`}>
-              <span className="check-icon">{c.severity === 'critical' ? '✗' : '!'}</span>
+              <Icon name={c.severity === 'critical' ? ICONS.error : ICONS.warn} size={15} className="check-icon" />
               <div className="flex-1">
                 <div className="font-semibold">{c.label}</div>
                 <div className="text-xs opacity-80 break-all">{resolveDetail(c.detail)}</div>
@@ -1280,7 +1280,7 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
               </button>
               {showPassed && passed.map((c, i) => (
                 <div key={i} className="check-row check-pass">
-                  <span className="check-icon">✓</span>
+                  <Icon name={ICONS.success} size={15} className="check-icon" />
                   <div className="flex-1">
                     <div className="font-semibold">{c.label}</div>
                     <div className="text-xs opacity-80 break-all">{resolveDetail(c.detail)}</div>
