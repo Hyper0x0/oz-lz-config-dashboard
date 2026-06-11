@@ -70,7 +70,7 @@ export function AddressPill({
   return (
     <div className={`inline-flex flex-col ${className ?? ''}`}>
       {label && (
-        <span className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{label}</span>
+        <span className="label">{label}</span>
       )}
       <span
         className={`inline-flex items-center ${padCls} rounded-full bg-surface-container border border-outline-variant/20 hover:border-outline-variant/40 hover:bg-surface-container-high transition-colors group`}

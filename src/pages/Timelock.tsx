@@ -798,7 +798,7 @@ export function Timelock(): JSX.Element {
           ) : (
             <>
               <div className="mb-4">
-                <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Function</div>
+                <div className="label">Function</div>
                 <select className="input" value={selectedFn} onChange={(e) => setSelectedFn(e.target.value)}>
                   {uiFunctions.map((f) => (
                     <option key={f.name} value={f.name}>{f.name}</option>
@@ -811,7 +811,7 @@ export function Timelock(): JSX.Element {
                 <div className="mb-4 space-y-3">
                   {currentFn.inputs.map((input, i) => (
                     <div key={i}>
-                      <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">
+                      <div className="label">
                         {input.name || `arg${i}`}
                         <span className="ml-1.5 normal-case text-primary/60 font-normal">({input.type})</span>
                       </div>
@@ -875,11 +875,11 @@ export function Timelock(): JSX.Element {
 
           <div className="flex gap-3 mt-4 flex-wrap">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Delay (seconds)</div>
+              <div className="label">Delay (seconds)</div>
               <input className="input" value={delay} onChange={(e) => setDelay(e.target.value)} />
             </div>
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Salt</div>
+              <div className="label">Salt</div>
               <div className="flex gap-2">
                 <input
                   className={`input flex-1 ${saltInvalidForStarknet ? 'border-warn' : ''}`}
@@ -895,7 +895,7 @@ export function Timelock(): JSX.Element {
               )}
             </div>
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Predecessor</div>
+              <div className="label">Predecessor</div>
               <input
                 className={`input ${predecessorInvalidForStarknet ? 'border-warn' : ''}`}
                 value={predecessor}
@@ -915,18 +915,18 @@ export function Timelock(): JSX.Element {
             )}
             {calldata && (
               <div className="mb-3">
-                <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Encoded calldata</div>
+                <div className="label">Encoded calldata</div>
                 <div className="font-mono text-[11px] text-on-surface-variant break-all">{calldata}</div>
               </div>
             )}
             {chainType === 'starknet' && starkSelector && starkCalldata && (
               <div className="mb-3 space-y-2">
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Selector (sn_keccak)</div>
+                  <div className="label">Selector (sn_keccak)</div>
                   <div className="font-mono text-[11px] text-on-surface-variant break-all">{starkSelector}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">Calldata ({starkCalldata.length} felts)</div>
+                  <div className="label">Calldata ({starkCalldata.length} felts)</div>
                   <div className="font-mono text-[11px] text-on-surface-variant break-all">[{starkCalldata.join(', ')}]</div>
                 </div>
               </div>
@@ -994,7 +994,7 @@ export function Timelock(): JSX.Element {
 
           <div className="flex gap-2 items-end">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">
+              <div className="label">
                 Operation hash ({chainType === 'starknet' ? 'felt252' : 'bytes32'})
               </div>
               <input className="input" value={lookupHash} onChange={(e) => setLookupHash(e.target.value)} />
@@ -1151,7 +1151,7 @@ export function Timelock(): JSX.Element {
             </div>
           )}
 
-          <div className="space-y-2">
+          <div key={opFilter} className="space-y-2 tab-panel">
             {scannedOps
               .filter((op) => opFilter === 'all' || op.state === opFilter)
               .sort((a, b) => {

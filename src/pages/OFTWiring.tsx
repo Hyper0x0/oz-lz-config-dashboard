@@ -15,6 +15,7 @@ import { downloadJson } from '@/components/TxStatus';
 import { decodeEnforcedOptions } from '@/utils/lzOptions';
 import { WalletChainHint } from '@/components/ChainSwitch';
 import { Spinner } from '@/components/Spinner';
+import { SkeletonRows } from '@/components/Skeleton';
 import { Section } from '@/components/Section';
 import { PageLayout } from '@/components/PageLayout';
 
@@ -383,7 +384,7 @@ export function OFTWiring(): JSX.Element {
           {/* Chain selectors */}
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{homeLabel} chain (source) — EID {home.eid}</div>
+              <div className="label">{homeLabel} chain (source) — EID {home.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={home}
                 disabledEid={remote.eid}
                 onSelect={(c) => { setHomeChain(c); clearData(); setTab('verify'); }} />
@@ -398,7 +399,7 @@ export function OFTWiring(): JSX.Element {
                 clearData();
               }}>⇄</button>
             <div className="flex-1">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1">{remoteLabel} chain (destination) — EID {remote.eid}</div>
+              <div className="label">{remoteLabel} chain (destination) — EID {remote.eid}</div>
               <AnyChainSelect evmChains={evmChains} isTestnet={isTestnet} selected={remote}
                 disabledEid={home.eid}
                 onSelect={(c) => { setRemoteChain(c); clearData(); setTab('verify'); }} />
@@ -872,7 +873,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
       {/* ── Summary grid (same layout as EVM-EVM) ── */}
       {(evmState || starkState) && (
         <>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-2">
+          <div className="label mt-2">
             EVM → Starknet ({evmChainData.name} → {starkChainData.name})
           </div>
           <div className="verify-summary">
@@ -882,7 +883,7 @@ function StarknetVerifyPanel({ home, remote, homeAddr, remoteAddr, cairo, cairoE
             <SummaryItem label="DVNs send (EVM)" value={evmState?.dvnSend?.requiredDVNCount ? `${evmState.dvnSend.requiredDVNCount}: ${evmState.dvnSend.requiredDVNs.map(dvnLabel).join(', ')}` : '—'} />
             <SummaryItem label="DVNs recv (SN)" value={starkState?.dvnRecv?.requiredDVNCount ? `${starkState.dvnRecv.requiredDVNCount}: ${starkState.dvnRecv.requiredDVNs.join(', ')}` : '—'} />
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-3">
+          <div className="label mt-3">
             Starknet → EVM ({starkChainData.name} → {evmChainData.name})
           </div>
           <div className="verify-summary">
@@ -1210,20 +1211,27 @@ function VerifyPanel({ homeChain, remoteChain, homeAddress, remoteAddress, verif
         </p>
       )}
 
+      {!result && verifying && (
+        <div className="tab-panel">
+          <div className="label flex items-center gap-1.5"><Spinner size="sm" /> Running pathway checks…</div>
+          <SkeletonRows rows={4} className="mt-2" />
+        </div>
+      )}
+
       {result?.error && (
         <div className="check-row check-critical"><span>RPC error: {result.error}</span></div>
       )}
 
       {result && !result.error && (
         <>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-2">A → B ({homeChain.name} → {remoteChain.name})</div>
+          <div className="label mt-2">A → B ({homeChain.name} → {remoteChain.name})</div>
           <div className="verify-summary">
             <SummaryItem label="Send lib" value={result.homeSendLib ?? '—'} />
             <SummaryItem label="Recv lib" value={result.remoteReceiveLib ? `${result.remoteReceiveLib}${result.remoteReceiveLibIsDefault ? ' (default)' : ''}` : '—'} />
             <SummaryItem label="Executor" value={result.homeExecutor?.executor ?? '—'} />
             <SummaryItem label="Confirmations" value={result.homeDVN ? `${result.homeDVN.confirmations} blocks` : '—'} />
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-1 mt-3">B → A ({remoteChain.name} → {homeChain.name})</div>
+          <div className="label mt-3">B → A ({remoteChain.name} → {homeChain.name})</div>
           <div className="verify-summary">
             <SummaryItem label="Send lib" value={result.remoteSendLib ?? '—'} />
             <SummaryItem label="Recv lib" value={result.homeReceiveLib ? `${result.homeReceiveLib}${result.homeReceiveLibIsDefault ? ' (default)' : ''}` : '—'} />

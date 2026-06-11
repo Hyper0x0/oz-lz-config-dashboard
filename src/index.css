@@ -142,12 +142,18 @@ select.input { cursor: pointer; }
 textarea.input { height: auto; min-height: 80px; resize: vertical; }
 
 /* ── Labels ──────────────────────────────────────────────────────────────── */
+/* Canonical field label — the single house style. Mono / uppercase / tracked,
+   matching the section-header convention. Do NOT hand-roll the equivalent
+   `text-[10px] font-mono uppercase tracking-widest …` Tailwind string — use `.label`. */
 .label {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 6px;
   display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
 
 /* ── Form layout ─────────────────────────────────────────────────────────── */
@@ -173,6 +179,8 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   transition: border-color var(--transition);
 }
 .step-card-open { border-color: var(--border-hover); }
+.step-card-done { border-color: rgba(105, 246, 184, 0.15); }
+.step-num-done { background: rgba(105, 246, 184, 0.1); border-color: rgba(105, 246, 184, 0.3); color: var(--secondary); }
 .step-header {
   display: flex; align-items: center; gap: 12px;
   width: 100%; background: none; border: none;
@@ -331,6 +339,28 @@ textarea.input { height: auto; min-height: 80px; resize: vertical; }
   color: var(--warn);
   line-height: 1.4;
 }
+
+/* ── Loading skeletons ───────────────────────────────────────────────────── */
+@keyframes skeletonShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-hover) 25%,
+    var(--bg-active) 37%,
+    var(--bg-hover) 63%
+  );
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+
+/* ── Tab / panel transitions ─────────────────────────────────────────────── */
+/* Re-key the wrapper on tab change to replay the fade. */
+.tab-panel { animation: fadeIn 180ms ease-out; }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */
 @keyframes fadeIn {

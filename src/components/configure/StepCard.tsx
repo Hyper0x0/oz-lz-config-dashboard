@@ -1,5 +1,5 @@
 import type { StepStatus } from './types';
-import { StatusIcon } from '../Icon';
+import { Icon, StatusIcon, ICONS } from '../Icon';
 import { Spinner } from '../Spinner';
 
 interface Props {
@@ -29,19 +29,17 @@ export function StepCard({ n, title, subtitle, status, open, onToggle, children 
   const allDone = status.home === 'configured' && status.remote === 'configured';
 
   return (
-    <div className={`step-card${open ? ' step-card-open' : ''}`}
-      style={allDone && !open ? { borderColor: 'rgba(105, 246, 184, 0.15)' } : undefined}>
+    <div className={`step-card${open ? ' step-card-open' : ''}${allDone && !open ? ' step-card-done' : ''}`}>
       <button className="step-header" onClick={onToggle}>
-        <span className={`step-num${allDone ? ' step-num-done' : ''}`}
-          style={allDone ? { background: 'rgba(105, 246, 184, 0.1)', borderColor: 'rgba(105, 246, 184, 0.3)', color: 'var(--secondary)' } : undefined}>
-          {allDone ? '✓' : n}
+        <span className={`step-num${allDone ? ' step-num-done' : ''}`}>
+          {allDone ? <Icon name={ICONS.check} size={14} /> : n}
         </span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontWeight: 600 }}>{title}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{subtitle}</div>
+        <div className="flex-1 text-left">
+          <div className="font-semibold">{title}</div>
+          <div className="text-xs text-on-surface-variant">{subtitle}</div>
         </div>
         {statusBadge(status)}
-        <span style={{ color: 'var(--text-dim)', fontSize: 12, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
+        <Icon name={open ? 'expand_less' : 'expand_more'} size={18} className="text-on-surface-variant ml-2" />
       </button>
       {open && <div className="step-body">{children}</div>}
     </div>
