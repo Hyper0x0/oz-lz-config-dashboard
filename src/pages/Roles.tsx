@@ -658,6 +658,23 @@ export function Roles(): JSX.Element {
         {checked && chainType === 'starknet' && <div className="text-xs text-secondary mt-2">✓ AccessControl confirmed — has_role calls succeeded</div>}
       </Section>
 
+      {/* Empty state — fills the canvas before a contract is inspected */}
+      {!checked && (
+        <div className="panel flex flex-col items-center justify-center text-center gap-4 px-8 py-16">
+          <div className="panel-glyph w-14 h-14">
+            <Icon name="admin_panel_settings" size={26} className="text-primary/70" />
+          </div>
+          <div className="max-w-sm">
+            <div className="font-headline text-sm font-semibold text-on-surface">No contract loaded</div>
+            <p className="text-xs text-on-surface-variant mt-1.5 leading-relaxed">
+              Enter an OpenZeppelin <span className="font-mono text-on-surface/80">AccessControl</span> address above and
+              press <span className="text-primary">Check</span> to inspect its role assignments, your own roles, and
+              grant / revoke access.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Your Roles */}
       {checked && walletAddr && (
         <Section icon="badge" title="Your Roles" subtitle={`${walletAddr.slice(0, 8)}…${walletAddr.slice(-4)}`}>

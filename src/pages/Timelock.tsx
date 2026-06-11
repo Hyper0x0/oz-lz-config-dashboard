@@ -732,7 +732,7 @@ export function Timelock(): JSX.Element {
     <div className="grid grid-cols-12 gap-6">
 
       {/* ── Left: main content ── */}
-      <div className="col-span-12 lg:col-span-8 space-y-6">
+      <div className="col-span-12 lg:col-span-8 space-y-6 panel-stack">
 
         <Section icon="schedule" title="TimelockController" subtitle="Contract address and configuration">
           {/* Chain type toggle + network mode */}
@@ -874,11 +874,11 @@ export function Timelock(): JSX.Element {
           )}
 
           <div className="flex gap-3 mt-4 flex-wrap">
-            <div className="flex-1">
+            <div className="w-44 flex-shrink-0">
               <div className="label">Delay (seconds)</div>
               <input className="input" value={delay} onChange={(e) => setDelay(e.target.value)} />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-[220px]">
               <div className="label">Salt</div>
               <div className="flex gap-2">
                 <input
@@ -894,7 +894,7 @@ export function Timelock(): JSX.Element {
                 </div>
               )}
             </div>
-            <div className="flex-1">
+            <div className="basis-full">
               <div className="label">Predecessor</div>
               <input
                 className={`input ${predecessorInvalidForStarknet ? 'border-warn' : ''}`}
@@ -1103,6 +1103,7 @@ export function Timelock(): JSX.Element {
 
       {/* ── Right: active operations sidebar ── */}
       <div className="col-span-12 lg:col-span-4">
+        <div className="sticky top-[88px]">
         <Section icon="list_alt" title="Operations" subtitle={scannedOps.length > 0 ? `${scannedOps.length} found` : 'Scan to discover'}
           actions={
             <button className="btn btn-sm" onClick={handleScanClick} disabled={scanning || !timelockAddr}>
@@ -1229,6 +1230,7 @@ export function Timelock(): JSX.Element {
             })}
           </div>
         </Section>
+        </div>
       </div>
 
     </div>
@@ -1332,7 +1334,7 @@ function RoleManagement({ timelockAddr, ops, evm, wrongChain, chainName, switchN
 
           {walletRoles.ADMIN && (
             <div className="subpanel rounded-lg p-4">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant mb-2">
+              <div className="label">
                 {revokeMode ? 'Revoke' : 'Grant'} role
               </div>
               <div className="flex gap-2 items-end flex-wrap">

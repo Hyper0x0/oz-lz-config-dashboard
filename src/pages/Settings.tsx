@@ -387,10 +387,10 @@ export function Settings(): JSX.Element {
   const addDisabled = chainsLoading || !hasUnusedChain;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
 
       <div className="flex items-center justify-between">
-        <h2 className="font-headline text-lg font-semibold text-on-surface m-0">Settings</h2>
+        <p className="text-xs text-on-surface-variant font-mono">Local configuration — stored in this browser only</p>
         <button className="btn btn-sm btn-danger" onClick={handleResetAll} title="Reset all overrides">
           <span className="material-symbols-outlined text-sm">restart_alt</span> Reset all
         </button>
