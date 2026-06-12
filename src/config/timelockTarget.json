@@ -4,16 +4,6 @@
   "abi": [
     {
       "type": "function",
-      "name": "setContractAddress",
-      "stateMutability": "nonpayable",
-      "inputs": [
-        { "name": "_key",  "type": "bytes32" },
-        { "name": "_addr", "type": "address" }
-      ],
-      "outputs": []
-    },
-    {
-      "type": "function",
       "name": "registerVault",
       "stateMutability": "nonpayable",
       "inputs": [
@@ -71,26 +61,6 @@
       "inputs": [
         { "name": "vaultId",   "type": "uint256" },
         { "name": "recipient", "type": "address" }
-      ],
-      "outputs": []
-    },
-    {
-      "type": "function",
-      "name": "setKeeper",
-      "stateMutability": "nonpayable",
-      "inputs": [
-        { "name": "vaultId", "type": "uint256" },
-        { "name": "keeper",  "type": "address" }
-      ],
-      "outputs": []
-    },
-    {
-      "type": "function",
-      "name": "setAllocator",
-      "stateMutability": "nonpayable",
-      "inputs": [
-        { "name": "vaultId",   "type": "uint256" },
-        { "name": "allocator", "type": "address" }
       ],
       "outputs": []
     },
