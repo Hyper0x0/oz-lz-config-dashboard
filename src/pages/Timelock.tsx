@@ -328,8 +328,11 @@ export function Timelock(): JSX.Element {
   const [lastStarkCalldata, setLastStarkCalldata] = useState<string[] | null>(null);
   useEffect(() => { if (starkSelector) setLastStarkSelector(starkSelector); }, [starkSelector]);
   useEffect(() => { if (starkCalldata) setLastStarkCalldata(starkCalldata); }, [starkCalldata]);
-  const execStarkSelector = starkSelector ?? lastStarkSelector;
-  const execStarkCalldata = starkCalldata ?? lastStarkCalldata;
+  // ── Starknet: selector + calldata recovered by Load (mirrors EVM derivedCalldata) ──
+  const [derivedStarkSelector, setDerivedStarkSelector] = useState<string | null>(null);
+  const [derivedStarkCalldata, setDerivedStarkCalldata] = useState<string[] | null>(null);
+  const execStarkSelector = derivedStarkSelector ?? starkSelector ?? lastStarkSelector;
+  const execStarkCalldata = derivedStarkCalldata ?? starkCalldata ?? lastStarkCalldata;
 
   // ── Operation hash ────────────────────────────────────────────────────────
   const evmFreshOpHash = chainType === 'evm' && execCalldata && timelockAddr
@@ -1056,7 +1059,7 @@ export function Timelock(): JSX.Element {
                           : !evm.isConnected || !derivedCalldata}>Execute</button>
                     </StickyAction>
                     {chainType === 'evm' && evm.isConnected && !derivedCalldata && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
-                    {chainType === 'starknet' && stark.isConnected && (!execStarkSelector || !execStarkCalldata) && <span className="text-[11px] text-on-surface-variant">Re-enter the scheduled function + args to execute</span>}
+                    {chainType === 'starknet' && stark.isConnected && (!execStarkSelector || !execStarkCalldata) && <span className="text-[11px] text-on-surface-variant">Load an operation from the sidebar first</span>}
                   </div>
                 )}
                 {(opState === 'Waiting' || opState === 'Ready') && !wrongChain && (
@@ -1258,6 +1261,8 @@ export function Timelock(): JSX.Element {
                         setDerivedCalldata(op.data);
                         setDerivedPredecessor(op.predecessor);
                         setDerivedSalt(op.salt);
+                        setDerivedStarkSelector(op.cairoSelector ?? null);
+                        setDerivedStarkCalldata(op.cairoCalldata ?? null);
                         setOpState(op.state);
                         setOpEta(op.eta);
                       }}>Load</button>
