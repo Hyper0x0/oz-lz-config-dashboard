@@ -342,9 +342,21 @@ export function Timelock(): JSX.Element {
   const [starkOpHash, setStarkOpHash] = useState<string | null>(null);
   const [opHashError, setOpHashError] = useState<string | null>(null);
   const starkCalldataKey = execStarkCalldata?.join(',') ?? '';
+  // Salt / predecessor felt252 validation (Starknet only). Declared before the
+  // op-hash effect so it can skip the doomed RPC call for out-of-range values.
+  const saltInvalidForStarknet = chainType === 'starknet' && !!salt.trim() && !isFelt252(salt);
+  const predecessorInvalidForStarknet = chainType === 'starknet' && !!predecessor.trim() && !isFelt252(predecessor);
+  // Auto-reveal Advanced when a value goes out of range so the warning surfaces,
+  // but only on the transition — the toggle stays authoritative and can re-hide it.
+  useEffect(() => {
+    if (saltInvalidForStarknet || predecessorInvalidForStarknet) setShowAdvanced(true);
+  }, [saltInvalidForStarknet, predecessorInvalidForStarknet]);
   useEffect(() => {
     if (chainType !== 'starknet') { setStarkOpHash(null); setOpHashError(null); return; }
     if (!timelockAddr || !execStarkSelector || !execStarkCalldata) { setStarkOpHash(null); setOpHashError(null); return; }
+    // A felt-range violation would make starknet_call reject with a raw RPC
+    // error ("maximum field value exceeded") — the inline warning covers it.
+    if (saltInvalidForStarknet || predecessorInvalidForStarknet) { setStarkOpHash(null); setOpHashError(null); return; }
     let cancelled = false;
     setOpHashError(null);
     const timer = setTimeout(async () => {
@@ -357,16 +369,12 @@ export function Timelock(): JSX.Element {
     }, 300);
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainType, timelockAddr, execStarkSelector, starkCalldataKey, predecessor, salt, starkChain.rpc]);
+  }, [chainType, timelockAddr, execStarkSelector, starkCalldataKey, predecessor, salt, starkChain.rpc, saltInvalidForStarknet, predecessorInvalidForStarknet]);
 
   const freshOpHash = chainType === 'starknet' ? starkOpHash : evmFreshOpHash;
   const [lastOpHash, setLastOpHash] = useState<string | null>(null);
   useEffect(() => { if (freshOpHash) setLastOpHash(freshOpHash); }, [freshOpHash]);
   const opHash = freshOpHash ?? lastOpHash;
-
-  // ── Salt / predecessor felt252 validation (Starknet only) ────────────────
-  const saltInvalidForStarknet = chainType === 'starknet' && !!salt.trim() && !isFelt252(salt);
-  const predecessorInvalidForStarknet = chainType === 'starknet' && !!predecessor.trim() && !isFelt252(predecessor);
 
   // ── Check op state ────────────────────────────────────────────────────────
   const [lookupHash,  setLookupHash]  = useState('');
@@ -906,12 +914,16 @@ export function Timelock(): JSX.Element {
               onClick={() => setShowAdvanced((v) => !v)}>
               <Icon name={showAdvanced ? 'expand_less' : 'expand_more'} size={16} />
               Advanced
+              {!showAdvanced && (saltInvalidForStarknet || predecessorInvalidForStarknet) && (
+                <span className="text-warn ml-1" title="A salt/predecessor value is out of felt252 range">⚠</span>
+              )}
             </button>
           </div>
 
-          {/* Advanced — salt & predecessor (auto-revealed when a value is out of
-              felt252 range so the validation warning is never hidden). */}
-          {(showAdvanced || saltInvalidForStarknet || predecessorInvalidForStarknet) && (
+          {/* Advanced — salt & predecessor. Auto-revealed once when a value goes
+              out of felt252 range (see effect above), but the toggle stays in
+              control so it can always be collapsed. */}
+          {showAdvanced && (
             <div className="mt-3 space-y-3 reveal">
               <div>
                 <div className="label">Salt</div>
@@ -925,7 +937,7 @@ export function Timelock(): JSX.Element {
                 </div>
                 {saltInvalidForStarknet && (
                   <div className="text-[11px] text-warn mt-1 leading-snug">
-                    Out of felt252 range. Starknet requires salt &lt; 2<sup>252</sup>. Click <b>Rand</b> to regenerate.
+                    Out of felt252 range. Starknet requires salt &lt; the field prime (~2<sup>251</sup>). Click <b>Rand</b> to regenerate.
                   </div>
                 )}
               </div>

@@ -59,22 +59,30 @@ export function operationStateLabel(state: number): OperationState {
   }
 }
 
-/** Generates a random 252-bit salt — fits both Solidity bytes32 and Starknet felt252. */
+/**
+ * Generates a random salt valid for both Solidity bytes32 and Starknet felt252.
+ *
+ * felt252 must be strictly less than the STARK prime (~2^251), NOT 2^252-1, so
+ * masking the top byte to 0x07 caps the value at 2^251-1 — always below the
+ * prime and a valid bytes32. A wider mask lets values like 0xe… overflow the
+ * field, which Starknet rejects with "The maximum field value was exceeded".
+ */
 export function randomSalt(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  bytes[0] &= 0x0f;
+  bytes[0] &= 0x07;
   return '0x' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const FELT252_MAX = (1n << 252n) - 1n;
+/** The STARK field prime: 2^251 + 17 * 2^192 + 1. Valid felt252 values are [0, STARK_PRIME - 1]. */
+const STARK_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
 
-/** True when `s` parses as a hex value in the Starknet felt252 range [0, 2^252-1]. */
+/** True when `s` parses as a hex value in the Starknet felt252 range [0, STARK_PRIME - 1]. */
 export function isFelt252(s: string): boolean {
   const trimmed = s.trim();
   if (!/^0x[0-9a-fA-F]+$/.test(trimmed)) return false;
   try {
-    return BigInt(trimmed) <= FELT252_MAX;
+    return BigInt(trimmed) < STARK_PRIME;
   } catch {
     return false;
   }
